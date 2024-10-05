@@ -1,0 +1,8 @@
+[package]
+name = "firewheel-cpal"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+firewheel-core = { path = "../firewheel-core" }
+cpal = "0.15.3"
