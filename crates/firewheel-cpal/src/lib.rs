@@ -1,33 +1,36 @@
 use std::{fmt::Debug, time::Duration};
 
 use cpal::traits::{DeviceTrait, HostTrait};
-
-// Re-export firewheel module for convenience.
-pub use firewheel::*;
+use firewheel_graph::{
+    backend::DeviceInfo,
+    graph::{AudioGraphConfig, CompileGraphError},
+    processor::{FwProcessor, FwProcessorStatus},
+    ActiveFwCtx, InactiveFwCtx,
+};
 
 const BUILD_STREAM_TIMEOUT: Duration = Duration::from_secs(5);
 const MSG_CHANNEL_CAPACITY: usize = 4;
 
-pub struct InactiveFwCpalCtx {
-    cx: InactiveFwCtx,
+pub struct InactiveFwCpalCtx<C> {
+    cx: InactiveFwCtx<C>,
 }
 
-impl InactiveFwCpalCtx {
-    pub fn new(config: firewheel::Config) -> Self {
+impl<C: 'static + Send> InactiveFwCpalCtx<C> {
+    pub fn new(graph_config: AudioGraphConfig) -> Self {
         Self {
-            cx: InactiveFwCtx::new(config),
+            cx: InactiveFwCtx::new(graph_config),
         }
     }
 
-    pub fn cx(&self) -> &InactiveFwCtx {
+    pub fn cx(&self) -> &InactiveFwCtx<C> {
         &self.cx
     }
 
-    pub fn cx_mut(&mut self) -> &mut InactiveFwCtx {
+    pub fn cx_mut(&mut self) -> &mut InactiveFwCtx<C> {
         &mut self.cx
     }
 
-    pub fn available_output_devices(&self) -> Vec<backend::DeviceInfo> {
+    pub fn available_output_devices(&self) -> Vec<DeviceInfo> {
         let mut devices = Vec::with_capacity(16);
 
         let host = cpal::default_host();
@@ -67,7 +70,7 @@ impl InactiveFwCpalCtx {
                         }
                     };
 
-                    devices.push(backend::DeviceInfo {
+                    devices.push(DeviceInfo {
                         name,
                         num_channels: default_out_config.channels(),
                         is_default,
@@ -86,7 +89,8 @@ impl InactiveFwCpalCtx {
         self,
         output_device: Option<&String>,
         fallback: bool,
-    ) -> Result<ActiveFwCpalCtx, (InactiveFwCpalCtx, ActivateError)> {
+        user_cx: C,
+    ) -> Result<ActiveFwCpalCtx<C>, (InactiveFwCpalCtx<C>, C, ActivateError)> {
         let host = cpal::default_host();
 
         let mut device = None;
@@ -106,6 +110,7 @@ impl InactiveFwCpalCtx {
                     } else {
                         return Err((
                             self,
+                            user_cx,
                             ActivateError::DeviceNotFound(output_device_name.clone()),
                         ));
                     }
@@ -114,7 +119,7 @@ impl InactiveFwCpalCtx {
                     if fallback {
                         log::error!("Failed to get output audio devices: {}. Falling back to default device...", e);
                     } else {
-                        return Err((self, e.into()));
+                        return Err((self, user_cx, e.into()));
                     }
                 }
             }
@@ -127,7 +132,7 @@ impl InactiveFwCpalCtx {
                     // TODO: Use dummy audio backend as fallback.
                     todo!()
                 } else {
-                    return Err((self, ActivateError::DefaultDeviceNotFound));
+                    return Err((self, user_cx, ActivateError::DefaultDeviceNotFound));
                 }
             };
             device = Some(default_device);
@@ -145,7 +150,7 @@ impl InactiveFwCpalCtx {
                     // TODO: Use dummy audio backend as fallback.
                     todo!()
                 } else {
-                    return Err((self, e.into()));
+                    return Err((self, user_cx, e.into()));
                 }
             }
         };
@@ -166,11 +171,11 @@ impl InactiveFwCpalCtx {
         );
 
         let (mut to_stream_tx, mut from_ctx_rx) =
-            rtrb::RingBuffer::<CtxToStreamMsg>::new(MSG_CHANNEL_CAPACITY);
+            rtrb::RingBuffer::<CtxToStreamMsg<C>>::new(MSG_CHANNEL_CAPACITY);
         let (mut err_to_cx_tx, from_err_rx) =
             rtrb::RingBuffer::<cpal::StreamError>::new(MSG_CHANNEL_CAPACITY);
 
-        let mut processor: Option<processor::FwProcessor> = None;
+        let mut processor: Option<FwProcessor<C>> = None;
 
         let stream = match device.build_output_stream(
             &config,
@@ -196,14 +201,17 @@ impl InactiveFwCpalCtx {
                     // TODO: Use dummy audio backend as fallback.
                     todo!()
                 } else {
-                    return Err((self, e.into()));
+                    return Err((self, user_cx, e.into()));
                 }
             }
         };
 
-        let (cx, processor) =
-            self.cx
-                .activate(config.sample_rate.0, num_in_channels, num_out_channels);
+        let (cx, processor) = self.cx.activate(
+            config.sample_rate.0,
+            num_in_channels,
+            num_out_channels,
+            user_cx,
+        );
 
         to_stream_tx
             .push(CtxToStreamMsg::NewProcessor(processor))
@@ -223,20 +231,20 @@ impl InactiveFwCpalCtx {
 }
 
 // Implement Debug so `unwrap()` can be used.
-impl Debug for InactiveFwCpalCtx {
+impl<C> Debug for InactiveFwCpalCtx<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "InactiveFwCpalCtx")
     }
 }
 
-fn data_callback(
+fn data_callback<C>(
     output: &mut [f32],
     num_in_channels: usize,
     num_out_channels: usize,
     // TODO: use provided timestamp in some way
     _info: &cpal::OutputCallbackInfo,
-    from_ctx_rx: &mut rtrb::Consumer<CtxToStreamMsg>,
-    processor: &mut Option<processor::FwProcessor>,
+    from_ctx_rx: &mut rtrb::Consumer<CtxToStreamMsg<C>>,
+    processor: &mut Option<FwProcessor<C>>,
 ) {
     while let Ok(msg) = from_ctx_rx.pop() {
         let CtxToStreamMsg::NewProcessor(p) = msg;
@@ -249,8 +257,8 @@ fn data_callback(
 
         match processor.process_interleaved(&[], output, num_in_channels, num_out_channels, frames)
         {
-            processor::FwProcessorStatus::Ok => {}
-            processor::FwProcessorStatus::DropProcessor => drop_processor = true,
+            FwProcessorStatus::Ok => {}
+            FwProcessorStatus::DropProcessor => drop_processor = true,
         }
     } else {
         output.fill(0.0);
@@ -262,25 +270,25 @@ fn data_callback(
     }
 }
 
-struct ActiveFwCpalCtxInner {
-    pub cx: ActiveFwCtx,
-    _to_stream_tx: rtrb::Producer<CtxToStreamMsg>,
+struct ActiveFwCpalCtxInner<C: 'static> {
+    pub cx: ActiveFwCtx<C>,
+    _to_stream_tx: rtrb::Producer<CtxToStreamMsg<C>>,
     from_err_rx: rtrb::Consumer<cpal::StreamError>,
     out_device_name: String,
     config: cpal::StreamConfig,
 }
 
-pub struct ActiveFwCpalCtx {
-    inner: Option<ActiveFwCpalCtxInner>,
+pub struct ActiveFwCpalCtx<C: 'static> {
+    inner: Option<ActiveFwCpalCtxInner<C>>,
     stream: Option<cpal::Stream>,
 }
 
-impl ActiveFwCpalCtx {
-    pub fn cx(&self) -> &ActiveFwCtx {
+impl<C> ActiveFwCpalCtx<C> {
+    pub fn cx(&self) -> &ActiveFwCtx<C> {
         &self.inner.as_ref().unwrap().cx
     }
 
-    pub fn cx_mut(&mut self) -> &mut ActiveFwCtx {
+    pub fn cx_mut(&mut self) -> &mut ActiveFwCtx<C> {
         &mut self.inner.as_mut().unwrap().cx
     }
 
@@ -295,7 +303,7 @@ impl ActiveFwCpalCtx {
     /// Update the firewheel context.
     ///
     /// This must be called reguarly (i.e. once every frame).
-    pub fn update(mut self) -> UpdateStatus {
+    pub fn update(mut self) -> UpdateStatus<C> {
         let inner = self.inner.take().unwrap();
         let stream = self.stream.take();
 
@@ -308,17 +316,18 @@ impl ActiveFwCpalCtx {
         } = inner;
 
         if let Ok(e) = from_err_rx.pop() {
-            let cx = cx.deactivate(false);
+            let (cx, user_cx) = cx.deactivate(false);
             let _ = stream;
 
             return UpdateStatus::Deactivated {
                 cx: InactiveFwCpalCtx { cx },
+                user_cx,
                 error_msg: Some(e),
             };
         }
 
         match cx.update() {
-            firewheel::context::UpdateStatus::Ok { cx, graph_error } => UpdateStatus::Ok {
+            firewheel_graph::context::UpdateStatus::Ok { cx, graph_error } => UpdateStatus::Ok {
                 cx: Self {
                     inner: Some(ActiveFwCpalCtxInner {
                         cx,
@@ -331,28 +340,29 @@ impl ActiveFwCpalCtx {
                 },
                 graph_error,
             },
-            firewheel::context::UpdateStatus::Deactivated(cx) => {
+            firewheel_graph::context::UpdateStatus::Deactivated { cx, user_cx } => {
                 let _ = stream;
 
                 UpdateStatus::Deactivated {
                     cx: InactiveFwCpalCtx { cx },
+                    user_cx,
                     error_msg: None,
                 }
             }
         }
     }
 
-    pub fn deactivate(mut self) -> InactiveFwCpalCtx {
+    pub fn deactivate(mut self) -> (InactiveFwCpalCtx<C>, Option<C>) {
         let inner = self.inner.take().unwrap();
-        let cx = inner.cx.deactivate(true);
+        let (cx, user_cx) = inner.cx.deactivate(true);
 
         let _ = self.stream.take();
 
-        InactiveFwCpalCtx { cx }
+        (InactiveFwCpalCtx { cx }, user_cx)
     }
 }
 
-impl Drop for ActiveFwCpalCtx {
+impl<C: 'static> Drop for ActiveFwCpalCtx<C> {
     fn drop(&mut self) {
         if let Some(inner) = self.inner.take() {
             inner.cx.deactivate(self.stream.is_some());
@@ -360,19 +370,20 @@ impl Drop for ActiveFwCpalCtx {
     }
 }
 
-pub enum UpdateStatus {
+pub enum UpdateStatus<C: 'static> {
     Ok {
-        cx: ActiveFwCpalCtx,
-        graph_error: Option<graph::CompileGraphError>,
+        cx: ActiveFwCpalCtx<C>,
+        graph_error: Option<CompileGraphError>,
     },
     Deactivated {
-        cx: InactiveFwCpalCtx,
+        cx: InactiveFwCpalCtx<C>,
+        user_cx: Option<C>,
         error_msg: Option<cpal::StreamError>,
     },
 }
 
-enum CtxToStreamMsg {
-    NewProcessor(processor::FwProcessor),
+enum CtxToStreamMsg<C: 'static> {
+    NewProcessor(FwProcessor<C>),
 }
 
 /// An error occured while trying to activate an [`InactiveFwCpalCtx`]

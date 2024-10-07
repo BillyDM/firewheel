@@ -1,8 +1,7 @@
 [package]
-name = "firewheel-cpal"
-version = "0.1.0"
-description = "cpal backend for Firewheel"
-homepage = "https://github.com/BillyDM/firewheel/blob/main/crates/firewheel-cpal"
+name = "firewheel-graph"
+description = "Core audio graph algorithm and executor for Firewheel"
+homepage = "https://github.com/BillyDM/firewheel/blob/main/crates/firewheel-graph"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -11,8 +10,9 @@ categories.workspace = true
 
 [dependencies]
 firewheel-core = { path = "../firewheel-core" }
-firewheel-graph = { path = "../firewheel-graph" }
 log.workspace = true
 rtrb.workspace = true
 thiserror.workspace = true
-cpal = "0.15.3"
+smallvec.workspace = true
+ahash = "0.8.11"
+thunderdome = "0.6.1"

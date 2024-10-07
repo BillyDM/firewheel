@@ -1,8 +1,8 @@
 use thunderdome::Arena;
 
-use crate::{
-    graph::ScheduleHeapData,
-    node::{AudioNodeProcessor, NodeID, ProcInfo},
+use crate::graph::{NodeID, ScheduleHeapData};
+use firewheel_core::{
+    node::{AudioNodeProcessor, ProcInfo},
     SilenceMask,
 };
 
@@ -13,15 +13,16 @@ pub enum FwProcessorStatus {
     DropProcessor,
 }
 
-pub struct FwProcessor {
-    nodes: Arena<Box<dyn AudioNodeProcessor>>,
-    schedule_data: Option<ScheduleHeapData>,
+pub struct FwProcessor<C: 'static> {
+    nodes: Arena<Box<dyn AudioNodeProcessor<C>>>,
+    schedule_data: Option<Box<ScheduleHeapData<C>>>,
+    user_cx: Option<C>,
 
     // TODO: Do research on whether `rtrb` is compatible with
     // webassembly. If not, use conditional compilation to
     // use a different channel type when targeting webassembly.
-    from_graph_rx: rtrb::Consumer<ContextToProcessorMsg>,
-    to_graph_tx: rtrb::Producer<ProcessorToContextMsg>,
+    from_graph_rx: rtrb::Consumer<ContextToProcessorMsg<C>>,
+    to_graph_tx: rtrb::Producer<ProcessorToContextMsg<C>>,
 
     max_block_frames: usize,
 
@@ -31,18 +32,20 @@ pub struct FwProcessor {
     running: bool,
 }
 
-impl FwProcessor {
+impl<C> FwProcessor<C> {
     pub(crate) fn new(
-        from_graph_rx: rtrb::Consumer<ContextToProcessorMsg>,
-        to_graph_tx: rtrb::Producer<ProcessorToContextMsg>,
+        from_graph_rx: rtrb::Consumer<ContextToProcessorMsg<C>>,
+        to_graph_tx: rtrb::Producer<ProcessorToContextMsg<C>>,
         node_capacity: usize,
         num_stream_in_channels: usize,
         num_stream_out_channels: usize,
         max_block_frames: usize,
+        user_cx: C,
     ) -> Self {
         Self {
             nodes: Arena::with_capacity(node_capacity * 2),
             schedule_data: None,
+            user_cx: Some(user_cx),
             from_graph_rx,
             to_graph_tx,
             max_block_frames,
@@ -101,7 +104,7 @@ impl FwProcessor {
                     num_in_channels,
                     &mut self.stream_in_buffer_list,
                     |channels: &mut [&mut [f32]]| -> SilenceMask {
-                        crate::util::deinterleave(
+                        firewheel_core::util::deinterleave(
                             channels.iter_mut().map(|ch| &mut **ch),
                             &input[frames_processed * num_in_channels
                                 ..(frames_processed + block_frames) * num_in_channels],
@@ -126,7 +129,7 @@ impl FwProcessor {
                         if channels.len() == 2 && num_out_channels == 2 {
                             // Use optimized stereo interleaving since it is the most
                             // common case.
-                            crate::util::interleave_stereo(
+                            firewheel_core::util::interleave_stereo(
                                 &channels[0],
                                 &channels[1],
                                 &mut output[frames_processed * num_out_channels
@@ -134,7 +137,7 @@ impl FwProcessor {
                                 Some(silence_mask),
                             );
                         } else {
-                            crate::util::interleave(
+                            firewheel_core::util::interleave(
                                 channels.iter().map(|ch| &**ch),
                                 &mut output[frames_processed * num_out_channels
                                     ..(frames_processed + block_frames) * num_out_channels],
@@ -214,6 +217,8 @@ impl FwProcessor {
             return;
         };
 
+        let user_cx = self.user_cx.as_mut().unwrap();
+
         schedule_data.schedule.process(
             block_frames,
             |node_id: NodeID,
@@ -226,6 +231,7 @@ impl FwProcessor {
                 let proc_info = ProcInfo {
                     in_silence_mask,
                     out_silence_mask: &mut out_silence_mask,
+                    cx: user_cx,
                 };
 
                 self.nodes[node_id.0].process(block_frames, proc_info, inputs, outputs);
@@ -236,7 +242,7 @@ impl FwProcessor {
     }
 }
 
-impl Drop for FwProcessor {
+impl<C> Drop for FwProcessor<C> {
     fn drop(&mut self) {
         // Make sure the nodes are not deallocated in the audio thread.
         let mut nodes = Arena::new();
@@ -245,19 +251,21 @@ impl Drop for FwProcessor {
         let _ = self.to_graph_tx.push(ProcessorToContextMsg::Dropped {
             nodes,
             _schedule_data: self.schedule_data.take(),
+            user_cx: self.user_cx.take(),
         });
     }
 }
 
-pub(crate) enum ContextToProcessorMsg {
-    NewSchedule(ScheduleHeapData),
+pub(crate) enum ContextToProcessorMsg<C> {
+    NewSchedule(Box<ScheduleHeapData<C>>),
     Stop,
 }
 
-pub(crate) enum ProcessorToContextMsg {
-    ReturnSchedule(ScheduleHeapData),
+pub(crate) enum ProcessorToContextMsg<C> {
+    ReturnSchedule(Box<ScheduleHeapData<C>>),
     Dropped {
-        nodes: Arena<Box<dyn AudioNodeProcessor>>,
-        _schedule_data: Option<ScheduleHeapData>,
+        nodes: Arena<Box<dyn AudioNodeProcessor<C>>>,
+        _schedule_data: Option<Box<ScheduleHeapData<C>>>,
+        user_cx: Option<C>,
     },
 }

@@ -1,13 +1,40 @@
+[package]
+name = "firewheel"
+version = "0.1.0"
+description = "Flexible, high-performance, and libre audio engine for games (WIP)"
+homepage = "https://github.com/BillyDM/firewheel"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+authors = ["Billy Messenger <60663878+BillyDM@users.noreply.github.com>"]
+keywords = ["game", "audio"]
+categories = ["game-development", "multimedia::audio"]
+
 [workspace]
 members = [
-    "crates/firewheel",
+    "crates/firewheel-core",
+    "crates/firewheel-graph",
     "crates/firewheel-cpal",
-    "examples/beep_test", 
+    "examples/beep_test",
 ]
+
+[features]
+default = ["cpal"]
+cpal = ["dep:firewheel-cpal"]
+
+[dependencies]
+firewheel-core = { path = "crates/firewheel-core" }
+firewheel-graph = { path = "crates/firewheel-graph" }
+firewheel-cpal = { path = "crates/firewheel-cpal", optional = true }
 
 [workspace.dependencies]
 log = "0.4.22"
 rtrb = "0.3.1"
 thiserror = "1.0.64"
 smallvec = "1.13.2"
-atomic_float = "1.1.0"

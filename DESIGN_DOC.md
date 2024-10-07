@@ -1,6 +1,4 @@
-# game-audio-engine Design Document
-
-(name in progress)
+# Firewheel Design Document
 
 # Overview
 

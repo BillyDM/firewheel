@@ -2,9 +2,7 @@ use smallvec::SmallVec;
 use std::{collections::VecDeque, rc::Rc};
 use thunderdome::Arena;
 
-use crate::node::NodeID;
-
-use super::error::CompileGraphError;
+use super::{error::CompileGraphError, NodeID};
 
 mod schedule;
 

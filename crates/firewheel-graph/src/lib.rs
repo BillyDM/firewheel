@@ -2,13 +2,9 @@ pub mod backend;
 pub mod context;
 pub mod factory_nodes;
 pub mod graph;
-pub mod node;
 pub mod processor;
-mod silence_mask;
-pub mod util;
 
-pub use context::{ActiveFwCtx, Config, InactiveFwCtx};
-pub use silence_mask::SilenceMask;
+pub use context::{ActiveFwCtx, InactiveFwCtx};
 
 /// The default maximum number of frames that can appear in a
 /// processing block.

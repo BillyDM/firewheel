@@ -1,0 +1,12 @@
+[package]
+name = "firewheel-core"
+version = "0.1.0"
+description = "Shared types for Firewheel crates"
+homepage = "https://github.com/BillyDM/firewheel/blob/main/crates/firewheel-core"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]

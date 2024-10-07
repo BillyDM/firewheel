@@ -1,6 +1,6 @@
 use smallvec::SmallVec;
 
-use crate::{node::AudioNodeProcessor, SilenceMask};
+use firewheel_core::{node::AudioNodeProcessor, util::recycle_vec, SilenceMask};
 
 use super::NodeID;
 
@@ -52,18 +52,18 @@ pub(super) struct OutBufferAssignment {
     pub _generation: usize,
 }
 
-pub struct ScheduleHeapData {
+pub struct ScheduleHeapData<C> {
     pub schedule: CompiledSchedule,
     pub nodes_to_remove: Vec<NodeID>,
-    pub removed_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor>)>,
-    pub new_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor>)>,
+    pub removed_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor<C>>)>,
+    pub new_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor<C>>)>,
 }
 
-impl ScheduleHeapData {
+impl<C> ScheduleHeapData<C> {
     pub fn new(
         schedule: CompiledSchedule,
         nodes_to_remove: Vec<NodeID>,
-        new_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor>)>,
+        new_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor<C>>)>,
     ) -> Self {
         let num_nodes_to_remove = nodes_to_remove.len();
 
@@ -131,8 +131,7 @@ impl CompiledSchedule {
 
         // This trick allows us to create a Vec of references without
         // allocating any memory.
-        let mut inputs: Vec<&mut [f32]> =
-            crate::util::recycle_vec(stream_in_buffer_list.take().unwrap());
+        let mut inputs: Vec<&mut [f32]> = recycle_vec(stream_in_buffer_list.take().unwrap());
 
         let fill_input_len = num_stream_inputs.min(graph_in_node.output_buffers.len());
 
@@ -163,7 +162,7 @@ impl CompiledSchedule {
             }
         }
 
-        *stream_in_buffer_list = Some(crate::util::recycle_vec(inputs));
+        *stream_in_buffer_list = Some(recycle_vec(inputs));
     }
 
     pub fn read_graph_outputs(
@@ -179,8 +178,7 @@ impl CompiledSchedule {
 
         // This trick allows us to create a Vec of references without
         // allocating any memory.
-        let mut outputs: Vec<&[f32]> =
-            crate::util::recycle_vec(stream_out_buffer_list.take().unwrap());
+        let mut outputs: Vec<&[f32]> = recycle_vec(stream_out_buffer_list.take().unwrap());
 
         let mut silence_mask = SilenceMask::NONE_SILENT;
 
@@ -203,7 +201,7 @@ impl CompiledSchedule {
 
         (read_outputs)(outputs.as_slice(), silence_mask);
 
-        *stream_out_buffer_list = Some(crate::util::recycle_vec(outputs));
+        *stream_out_buffer_list = Some(recycle_vec(outputs));
     }
 
     pub fn process(
@@ -215,9 +213,8 @@ impl CompiledSchedule {
 
         // This trick allows us to create a Vec of references without
         // allocating any memory.
-        let mut inputs: Vec<&[f32]> = crate::util::recycle_vec(self.in_buffer_list.take().unwrap());
-        let mut outputs: Vec<&mut [f32]> =
-            crate::util::recycle_vec(self.out_buffer_list.take().unwrap());
+        let mut inputs: Vec<&[f32]> = recycle_vec(self.in_buffer_list.take().unwrap());
+        let mut outputs: Vec<&mut [f32]> = recycle_vec(self.out_buffer_list.take().unwrap());
 
         for scheduled_node in self.schedule.iter() {
             let mut in_silence_mask = SilenceMask::NONE_SILENT;
@@ -264,8 +261,8 @@ impl CompiledSchedule {
             }
         }
 
-        self.in_buffer_list = Some(crate::util::recycle_vec(inputs));
-        self.out_buffer_list = Some(crate::util::recycle_vec(outputs));
+        self.in_buffer_list = Some(recycle_vec(inputs));
+        self.out_buffer_list = Some(recycle_vec(outputs));
     }
 }
 
@@ -317,9 +314,8 @@ fn silence_mask_mut<'a>(buffer_silence_flags: &'a mut [bool], buffer_index: usiz
 #[cfg(test)]
 mod tests {
     use crate::{
-        context::Config,
-        graph::{AddEdgeError, AudioGraph, EdgeID, InPortIdx, OutPortIdx},
-        node::DummyAudioNode,
+        factory_nodes::dummy::DummyAudioNode,
+        graph::{AddEdgeError, AudioGraph, AudioGraphConfig, EdgeID, InPortIdx, OutPortIdx},
     };
 
     use super::*;
@@ -332,7 +328,7 @@ mod tests {
     //  └───┘  └───┘
     #[test]
     fn simplest_graph_compile_test() {
-        let mut graph = AudioGraph::new(&Config {
+        let mut graph = AudioGraph::new(&AudioGraphConfig {
             num_graph_inputs: 1,
             num_graph_outputs: 1,
             ..Default::default()
@@ -376,7 +372,7 @@ mod tests {
     //       └───┘         └───┘
     #[test]
     fn graph_compile_test_1() {
-        let mut graph = AudioGraph::new(&Config {
+        let mut graph = AudioGraph::new(&AudioGraphConfig {
             num_graph_inputs: 2,
             num_graph_outputs: 2,
             ..Default::default()
@@ -464,7 +460,7 @@ mod tests {
     //   └───┘         └───┘
     #[test]
     fn graph_compile_test_2() {
-        let mut graph = AudioGraph::new(&Config {
+        let mut graph = AudioGraph::new(&AudioGraphConfig {
             num_graph_inputs: 2,
             num_graph_outputs: 2,
             ..Default::default()
@@ -527,7 +523,7 @@ mod tests {
         node_id: NodeID,
         in_ports_that_should_clear: &[bool],
         schedule: &CompiledSchedule,
-        graph: &AudioGraph,
+        graph: &AudioGraph<()>,
     ) {
         let node = graph.node_info(node_id).unwrap();
         let scheduled_node = schedule.schedule.iter().find(|&s| s.id == node_id).unwrap();
@@ -560,7 +556,7 @@ mod tests {
         }
     }
 
-    fn verify_edge(edge_id: EdgeID, graph: &AudioGraph, schedule: &CompiledSchedule) {
+    fn verify_edge(edge_id: EdgeID, graph: &AudioGraph<()>, schedule: &CompiledSchedule) {
         let edge = graph.edge(edge_id).unwrap();
 
         let mut src_buffer_idx = None;
@@ -587,7 +583,7 @@ mod tests {
 
     #[test]
     fn many_to_one_detection() {
-        let mut graph = AudioGraph::new(&Config {
+        let mut graph = AudioGraph::<()>::new(&AudioGraphConfig {
             num_graph_inputs: 2,
             num_graph_outputs: 1,
             ..Default::default()
@@ -610,7 +606,7 @@ mod tests {
 
     #[test]
     fn cycle_detection() {
-        let mut graph = AudioGraph::new(&Config {
+        let mut graph = AudioGraph::<()>::new(&AudioGraphConfig {
             num_graph_inputs: 0,
             num_graph_outputs: 2,
             ..Default::default()
