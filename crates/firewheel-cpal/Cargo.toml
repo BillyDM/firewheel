@@ -4,5 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-firewheel-core = { path = "../firewheel-core" }
+firewheel = { path = "../firewheel" }
 cpal = "0.15.3"
+log = "0.4.22"

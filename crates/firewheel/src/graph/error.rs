@@ -4,7 +4,9 @@
 use std::error::Error;
 use std::fmt;
 
-use super::compiler::{Edge, EdgeID, InPortIdx, NodeID, OutPortIdx};
+use crate::node::NodeID;
+
+use super::compiler::{Edge, EdgeID, InPortIdx, OutPortIdx};
 
 /// An error occurred while attempting to add an edge to the graph.
 #[derive(Debug, Clone)]

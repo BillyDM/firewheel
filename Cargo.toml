@@ -1,13 +1,6 @@
-[package]
-name = "firewheel"
-version = "0.1.0"
-edition = "2021"
-
 [workspace]
 members = [
-    "crates/firewheel-core",
+    "crates/firewheel",
     "crates/firewheel-cpal",
     "examples/beep_test", 
 ]
-
-[dependencies]

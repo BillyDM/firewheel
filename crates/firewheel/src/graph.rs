@@ -1,31 +1,16 @@
 mod compiler;
 mod error;
-mod executor;
-
-use std::time::{Duration, Instant};
 
 use ahash::{AHashMap, AHashSet};
-use error::CompileGraphError;
-use executor::{ExecutorToGraphMsg, GraphToExecutorMsg, ScheduleHeapData};
 use thunderdome::Arena;
 
-use compiler::CompiledSchedule;
+use crate::context::Config;
+use crate::node::{AudioNode, AudioNodeProcessor, DummyAudioNode, NodeID};
 
-pub use compiler::{Edge, EdgeID, InPortIdx, NodeEntry, NodeID, OutPortIdx};
-pub use error::AddEdgeError;
-pub use executor::AudioGraphExecutor;
+pub(crate) use self::compiler::{CompiledSchedule, ScheduleHeapData};
 
-use crate::{
-    backend::PollStatus,
-    node::{AudioNode, DummyAudioNode},
-    AudioBackend, DEFAULT_MAX_BLOCK_FRAMES,
-};
-
-const CHANNEL_CAPACITY: usize = 256;
-const CLOSE_STREAM_TIMEOUT: Duration = Duration::from_secs(5);
-const CLOSE_STREAM_SLEEP_INTERVAL: Duration = Duration::from_millis(2);
-const DEFAULT_NODE_CAPACITY: usize = 32;
-const DEFAULT_EDGE_CAPACITY: usize = 128;
+pub use self::compiler::{Edge, EdgeID, InPortIdx, NodeEntry, OutPortIdx};
+pub use self::error::{AddEdgeError, CompileGraphError};
 
 pub struct NodeWeight {
     pub node: Box<dyn AudioNode>,
@@ -40,16 +25,7 @@ struct EdgeHash {
     pub dst_port: InPortIdx,
 }
 
-struct Channel {
-    // TODO: Do research on whether `rtrb` is compatible with
-    // webassembly. If not, use conditional compilation to
-    // use a different channel type when targeting webassembly.
-    to_executor_tx: rtrb::Producer<GraphToExecutorMsg>,
-    from_executor_rx: rtrb::Consumer<ExecutorToGraphMsg>,
-}
-
-/// The main server struct for Firewheel
-pub struct FirewheelServer<B: AudioBackend> {
+pub struct AudioGraph {
     nodes: Arena<NodeEntry<NodeWeight>>,
     edges: Arena<Edge>,
     connected_input_ports: AHashSet<(NodeID, InPortIdx)>,
@@ -57,50 +33,30 @@ pub struct FirewheelServer<B: AudioBackend> {
 
     graph_in_id: NodeID,
     graph_out_id: NodeID,
-
-    channel: Option<Channel>,
-    stream_handle: Option<B::StreamHandle>,
-    backend: B,
-
     needs_compile: bool,
     max_block_frames: usize,
 
-    sample_rate: f64,
     nodes_to_remove_from_schedule: Vec<NodeID>,
-    nodes_to_add_to_schedule: Vec<NodeID>,
+    nodes_to_activate: Vec<NodeID>,
     active_nodes_to_remove: AHashMap<NodeID, NodeEntry<NodeWeight>>,
+
+    pub(crate) message_channel_capacity: usize,
 }
 
-impl<B: AudioBackend> FirewheelServer<B> {
-    /// Construct a new [FirewheelServer]
-    pub fn new(num_graph_inputs: u32, num_graph_outputs: u32) -> Self {
-        Self::with_capacity(
-            num_graph_inputs,
-            num_graph_outputs,
-            DEFAULT_NODE_CAPACITY,
-            DEFAULT_EDGE_CAPACITY,
-        )
-    }
-
-    /// Construct a new [FirewheelServer] with some initial allocated capacity.
-    pub fn with_capacity(
-        num_graph_inputs: u32,
-        num_graph_outputs: u32,
-        node_capacity: usize,
-        edge_capacity: usize,
-    ) -> Self {
-        let mut nodes = Arena::with_capacity(node_capacity);
+impl AudioGraph {
+    pub(crate) fn new(config: &Config) -> Self {
+        let mut nodes = Arena::with_capacity(config.initial_node_capacity);
 
         let graph_in_id = NodeID(nodes.insert(NodeEntry::new(
             0,
-            num_graph_inputs,
+            config.num_graph_inputs,
             NodeWeight {
                 node: Box::new(DummyAudioNode),
                 activated: false,
             },
         )));
         let graph_out_id = NodeID(nodes.insert(NodeEntry::new(
-            num_graph_outputs,
+            config.num_graph_outputs,
             0,
             NodeWeight {
                 node: Box::new(DummyAudioNode),
@@ -110,211 +66,26 @@ impl<B: AudioBackend> FirewheelServer<B> {
 
         Self {
             nodes,
-            edges: Arena::with_capacity(edge_capacity),
-            connected_input_ports: AHashSet::with_capacity(edge_capacity),
-            existing_edges: AHashSet::with_capacity(edge_capacity),
+            edges: Arena::with_capacity(config.initial_edge_capacity),
+            connected_input_ports: AHashSet::with_capacity(config.initial_edge_capacity),
+            existing_edges: AHashSet::with_capacity(config.initial_edge_capacity),
             graph_in_id,
             graph_out_id,
-            channel: None,
-            stream_handle: None,
-            backend: B::default(),
-            needs_compile: false,
-            max_block_frames: DEFAULT_MAX_BLOCK_FRAMES,
-            sample_rate: 44100.0,
+            needs_compile: true,
+            max_block_frames: config.max_block_frames,
             nodes_to_remove_from_schedule: Vec::new(),
-            nodes_to_add_to_schedule: vec![graph_in_id, graph_out_id],
-            active_nodes_to_remove: AHashMap::with_capacity(node_capacity),
+            nodes_to_activate: vec![graph_in_id, graph_out_id],
+            active_nodes_to_remove: AHashMap::with_capacity(config.initial_edge_capacity),
+            message_channel_capacity: config.message_channel_capacity,
         }
     }
 
-    pub fn start_stream(
-        &mut self,
-        num_stream_in_channels: u32,
-        num_stream_out_channels: u32,
-        max_block_frames: usize,
-        sample_rate: f64,
-        config: B::Config,
-    ) -> Result<(), StartStreamError<B>> {
-        if self.stream_handle.is_some() {
-            return Err(StartStreamError::AlreadyStarted);
-        }
-
-        let (to_executor_tx, from_graph_rx) =
-            rtrb::RingBuffer::<GraphToExecutorMsg>::new(CHANNEL_CAPACITY);
-        let (to_graph_tx, from_executor_rx) =
-            rtrb::RingBuffer::<ExecutorToGraphMsg>::new(CHANNEL_CAPACITY);
-
-        self.channel = Some(Channel {
-            to_executor_tx,
-            from_executor_rx,
-        });
-
-        self.needs_compile = true;
-        self.sample_rate = sample_rate;
-        self.max_block_frames = max_block_frames;
-
-        let executor = AudioGraphExecutor::new(
-            from_graph_rx,
-            to_graph_tx,
-            self.nodes.capacity(),
-            num_stream_in_channels,
-            num_stream_out_channels,
-            max_block_frames,
-        );
-
-        let stream_handle = match self.backend.start_stream(config, executor) {
-            Ok(s) => s,
-            Err(e) => {
-                self.reset_stream_state();
-                return Err(StartStreamError::BackendError(e));
-            }
-        };
-
-        self.stream_handle = Some(stream_handle);
-
-        self.compile_and_send_schedule()?;
-
-        Ok(())
+    pub fn max_block_frames(&self) -> usize {
+        self.max_block_frames
     }
 
-    /// Close the stream
-    ///
-    /// This will block the thread until the stream is successfully closed.
-    pub fn close_stream(&mut self) {
-        if self.channel.is_none() {
-            self.reset_stream_state();
-            return;
-        }
-
-        let mut stopped = false;
-        let mut dropped = false;
-
-        let start = Instant::now();
-
-        loop {
-            if let Err(_) = self
-                .channel
-                .as_mut()
-                .unwrap()
-                .to_executor_tx
-                .push(GraphToExecutorMsg::Stop)
-            {
-                log::error!("Audio graph message buffer is full");
-
-                // TODO: I don't think sleep is supported in WASM, so we will
-                // need to figure out something if that's the case.
-                std::thread::sleep(CLOSE_STREAM_SLEEP_INTERVAL);
-
-                if start.elapsed() > CLOSE_STREAM_TIMEOUT {
-                    log::error!("Timed out trying to send stop message to audio graph executor");
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        while !dropped {
-            if stopped {
-                // The audio graph has successfully stopped processing. We
-                // can now safely close the audio stream (dropping the handle
-                // automatically closes the stream).
-                self.stream_handle = None;
-            }
-
-            self.update_internal(&mut stopped, &mut dropped);
-
-            // TODO: I don't think sleep is supported in WASM, so we will
-            // need to figure out something if that's the case.
-            std::thread::sleep(CLOSE_STREAM_SLEEP_INTERVAL);
-
-            if start.elapsed() > CLOSE_STREAM_TIMEOUT {
-                log::error!("Timed out waiting for audio stream to close");
-                dropped = true;
-            }
-        }
-
-        self.reset_stream_state();
-    }
-
-    fn reset_stream_state(&mut self) {
-        self.channel = None;
-        self.stream_handle = None;
-        self.active_nodes_to_remove.clear();
-        self.nodes_to_remove_from_schedule.clear();
-        self.nodes_to_add_to_schedule.clear();
-        self.needs_compile = true;
-
-        for (node_id, node_entry) in self.nodes.iter_mut() {
-            if node_entry.weight.activated {
-                node_entry.weight.node.deactivate(None);
-                node_entry.weight.activated = false;
-            }
-
-            self.nodes_to_add_to_schedule.push(NodeID(node_id));
-        }
-    }
-
-    // TODO: Return status
-    /// Update the audio graph.
-    pub fn update(&mut self) {
-        let mut stopped = false;
-        let mut dropped = false;
-
-        self.update_internal(&mut stopped, &mut dropped);
-
-        if stopped || dropped {
-            self.reset_stream_state();
-        }
-
-        if let Some(stream_handle) = &self.stream_handle {
-            if let PollStatus::Err {
-                msg,
-                can_close_gracefully,
-            } = self.backend.poll_for_errors(stream_handle)
-            {
-                log::error!("Audio stream error: {}", msg);
-
-                if can_close_gracefully {
-                    self.close_stream();
-                } else {
-                    self.reset_stream_state();
-                }
-            }
-        }
-
-        // TODO: Parameter stuff
-    }
-
-    fn update_internal(&mut self, stopped: &mut bool, dropped: &mut bool) {
-        let Some(channel) = &mut self.channel else {
-            return;
-        };
-
-        while let Ok(msg) = channel.from_executor_rx.pop() {
-            match msg {
-                ExecutorToGraphMsg::ReturnSchedule(mut schedule_data) => {
-                    for (node_id, processor) in schedule_data.removed_node_processors.drain(..) {
-                        if let Some(mut node_entry) = self.active_nodes_to_remove.remove(&node_id) {
-                            node_entry.weight.node.deactivate(Some(processor));
-                        }
-                    }
-                }
-                ExecutorToGraphMsg::Stopped => *stopped = true,
-                ExecutorToGraphMsg::Dropped { mut nodes, .. } => {
-                    for (node_id, processor) in nodes.drain() {
-                        if let Some(node_entry) = self.nodes.get_mut(node_id) {
-                            if node_entry.weight.activated {
-                                node_entry.weight.node.deactivate(Some(processor));
-                                node_entry.weight.activated = false;
-                            }
-                        }
-                    }
-
-                    *dropped = true;
-                }
-            }
-        }
+    pub(crate) fn current_node_capacity(&self) -> usize {
+        self.nodes.capacity()
     }
 
     /// The ID of the graph input node
@@ -330,7 +101,12 @@ impl<B: AudioBackend> FirewheelServer<B> {
     /// Add a new [Node] the the audio graph.
     ///
     /// This will return the globally unique ID assigned to this node.
-    pub fn add_node(&mut self, num_inputs: u32, num_outputs: u32, node: impl AudioNode) -> NodeID {
+    pub fn add_node(
+        &mut self,
+        num_inputs: usize,
+        num_outputs: usize,
+        node: impl AudioNode,
+    ) -> NodeID {
         self.needs_compile = true;
 
         let new_id = NodeID(self.nodes.insert(NodeEntry::new(
@@ -343,7 +119,7 @@ impl<B: AudioBackend> FirewheelServer<B> {
         )));
         self.nodes[new_id.0].id = new_id;
 
-        self.nodes_to_add_to_schedule.push(new_id);
+        self.nodes_to_activate.push(new_id);
 
         new_id
     }
@@ -430,10 +206,16 @@ impl<B: AudioBackend> FirewheelServer<B> {
     ///
     /// This will return an error if a node with the given ID does not
     /// exist in the graph, or if the ID is of the graph input node.
-    pub fn set_num_inputs(&mut self, node_id: NodeID, num_inputs: u32) -> Result<Vec<EdgeID>, ()> {
+    pub fn set_num_inputs(
+        &mut self,
+        node_id: NodeID,
+        num_inputs: usize,
+    ) -> Result<Vec<EdgeID>, ()> {
         if node_id == self.graph_in_id {
             return Err(());
         }
+
+        let num_inputs = num_inputs as u32;
 
         let node_entry = self.nodes.get_mut(node_id.0).ok_or(())?;
 
@@ -461,13 +243,15 @@ impl<B: AudioBackend> FirewheelServer<B> {
     pub fn set_num_outputs(
         &mut self,
         node_id: NodeID,
-        num_outputs: u32,
+        num_outputs: usize,
     ) -> Result<Vec<EdgeID>, ()> {
         if node_id == self.graph_out_id {
             return Err(());
         }
 
         let node_entry = self.nodes.get_mut(node_id.0).ok_or(())?;
+
+        let num_outputs = num_outputs as u32;
 
         let old_num_outputs = node_entry.num_outputs;
         let mut removed_edges = Vec::new();
@@ -651,29 +435,31 @@ impl<B: AudioBackend> FirewheelServer<B> {
             &mut self.edges,
             self.graph_in_id,
             self.graph_out_id,
-            self.max_block_frames,
         )
     }
 
-    fn compile_and_send_schedule(&mut self) -> Result<(), CompileGraphError> {
-        if !self.needs_compile || self.channel.is_none() {
-            return Ok(());
-        }
+    pub(crate) fn needs_compile(&self) -> bool {
+        self.needs_compile
+    }
 
-        let schedule = self.compile()?;
+    pub(crate) fn compile(
+        &mut self,
+        sample_rate: f64,
+    ) -> Result<ScheduleHeapData, CompileGraphError> {
+        let schedule = self.compile_internal()?;
 
-        let mut nodes_to_add = Vec::with_capacity(self.nodes_to_add_to_schedule.len());
-        for node_id in self.nodes_to_add_to_schedule.iter() {
+        let mut new_node_processors = Vec::with_capacity(self.nodes_to_activate.len());
+        for node_id in self.nodes_to_activate.iter() {
             if let Some(node_entry) = self.nodes.get_mut(node_id.0) {
                 match node_entry.weight.node.activate(
-                    self.sample_rate,
+                    sample_rate,
                     self.max_block_frames,
                     node_entry.num_inputs as usize,
                     node_entry.num_outputs as usize,
                 ) {
-                    Ok(processor) => nodes_to_add.push((*node_id, processor)),
+                    Ok(processor) => new_node_processors.push((*node_id, processor)),
                     Err(e) => {
-                        for (n_id, processor) in nodes_to_add.drain(..) {
+                        for (n_id, processor) in new_node_processors.drain(..) {
                             self.nodes[n_id.0].weight.node.deactivate(Some(processor));
                         }
 
@@ -686,27 +472,17 @@ impl<B: AudioBackend> FirewheelServer<B> {
         let schedule_data = ScheduleHeapData::new(
             schedule,
             self.nodes_to_remove_from_schedule.clone(),
-            nodes_to_add,
+            new_node_processors,
         );
 
-        self.channel
-            .as_mut()
-            .unwrap()
-            .to_executor_tx
-            .push(GraphToExecutorMsg::NewSchedule(schedule_data))
-            .map_err(|_| CompileGraphError::MessageChannelFull)?;
-
         self.needs_compile = false;
-        self.nodes_to_add_to_schedule.clear();
+        self.nodes_to_activate.clear();
         self.nodes_to_remove_from_schedule.clear();
 
-        // TODO
-
-        Ok(())
+        Ok(schedule_data)
     }
 
-    /// Compile the graph into a schedule.
-    fn compile(&mut self) -> Result<CompiledSchedule, CompileGraphError> {
+    fn compile_internal(&mut self) -> Result<CompiledSchedule, CompileGraphError> {
         compiler::compile(
             &mut self.nodes,
             &mut self.edges,
@@ -715,20 +491,46 @@ impl<B: AudioBackend> FirewheelServer<B> {
             self.max_block_frames,
         )
     }
-}
 
-impl<B: AudioBackend> Drop for FirewheelServer<B> {
-    fn drop(&mut self) {
-        self.close_stream();
+    pub(crate) fn on_schedule_returned(&mut self, mut schedule_data: ScheduleHeapData) {
+        for (node_id, processor) in schedule_data.removed_node_processors.drain(..) {
+            if let Some(mut node_entry) = self.active_nodes_to_remove.remove(&node_id) {
+                node_entry.weight.node.deactivate(Some(processor));
+                node_entry.weight.activated = false;
+            } else if let Some(node_entry) = self.nodes.get_mut(node_id.0) {
+                if node_entry.weight.activated {
+                    node_entry.weight.node.deactivate(Some(processor));
+                    node_entry.weight.activated = false;
+
+                    self.nodes_to_activate.push(node_id);
+                }
+            }
+        }
     }
-}
 
-#[derive(Debug, thiserror::Error)]
-pub enum StartStreamError<B: AudioBackend> {
-    #[error("Audio stream has already been started")]
-    AlreadyStarted,
-    #[error("Backend error: {0}")]
-    BackendError(B::StartStreamError),
-    #[error("Graph error: {0}")]
-    GraphError(#[from] CompileGraphError),
+    pub(crate) fn on_processor_dropped(&mut self, mut nodes: Arena<Box<dyn AudioNodeProcessor>>) {
+        for (node_id, processor) in nodes.drain() {
+            if let Some(node_entry) = self.nodes.get_mut(node_id) {
+                if node_entry.weight.activated {
+                    node_entry.weight.node.deactivate(Some(processor));
+                    node_entry.weight.activated = false;
+                }
+            }
+        }
+    }
+
+    pub(crate) fn deactivate(&mut self) {
+        self.active_nodes_to_remove.clear();
+        self.nodes_to_remove_from_schedule.clear();
+        self.needs_compile = true;
+
+        for (node_id, node_entry) in self.nodes.iter_mut() {
+            if node_entry.weight.activated {
+                node_entry.weight.node.deactivate(None);
+                node_entry.weight.activated = false;
+            }
+
+            self.nodes_to_activate.push(NodeID(node_id));
+        }
+    }
 }

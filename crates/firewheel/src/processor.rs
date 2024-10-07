@@ -1,21 +1,27 @@
 use thunderdome::Arena;
 
 use crate::{
-    node::{AudioNodeProcessor, ProcInfo},
+    graph::ScheduleHeapData,
+    node::{AudioNodeProcessor, NodeID, ProcInfo},
     SilenceMask,
 };
 
-use super::{compiler::CompiledSchedule, NodeID};
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessStatus {
+    Ok,
+    /// If this is returned, then the [`FwProcessor`] must be dropped.
+    DropProcessor,
+}
 
-pub struct AudioGraphExecutor {
+pub struct FwProcessor {
     nodes: Arena<Box<dyn AudioNodeProcessor>>,
     schedule_data: Option<ScheduleHeapData>,
 
     // TODO: Do research on whether `rtrb` is compatible with
     // webassembly. If not, use conditional compilation to
     // use a different channel type when targeting webassembly.
-    from_graph_rx: rtrb::Consumer<GraphToExecutorMsg>,
-    to_graph_tx: rtrb::Producer<ExecutorToGraphMsg>,
+    from_graph_rx: rtrb::Consumer<ContextToProcessorMsg>,
+    to_graph_tx: rtrb::Producer<ProcessorToContextMsg>,
 
     max_block_frames: usize,
 
@@ -25,27 +31,31 @@ pub struct AudioGraphExecutor {
     running: bool,
 }
 
-impl AudioGraphExecutor {
+impl FwProcessor {
     pub(crate) fn new(
-        from_graph_rx: rtrb::Consumer<GraphToExecutorMsg>,
-        to_graph_tx: rtrb::Producer<ExecutorToGraphMsg>,
-        max_node_capacity: usize,
-        num_stream_in_channels: u32,
-        num_stream_out_channels: u32,
+        from_graph_rx: rtrb::Consumer<ContextToProcessorMsg>,
+        to_graph_tx: rtrb::Producer<ProcessorToContextMsg>,
+        node_capacity: usize,
+        num_stream_in_channels: usize,
+        num_stream_out_channels: usize,
         max_block_frames: usize,
     ) -> Self {
         Self {
-            nodes: Arena::with_capacity(max_node_capacity),
+            nodes: Arena::with_capacity(node_capacity * 2),
             schedule_data: None,
             from_graph_rx,
             to_graph_tx,
             max_block_frames,
-            stream_in_buffer_list: Some(Vec::with_capacity(num_stream_in_channels as usize)),
-            stream_out_buffer_list: Some(Vec::with_capacity(num_stream_out_channels as usize)),
+            stream_in_buffer_list: Some(Vec::with_capacity(num_stream_in_channels * 2)),
+            stream_out_buffer_list: Some(Vec::with_capacity(num_stream_out_channels * 2)),
             running: true,
         }
     }
 
+    /// Process the given buffers of audio data.
+    ///
+    /// If this returns [`ProcessStatus::DropProcessor`], then this
+    /// [`FwProcessor`] must be dropped.
     pub fn process_interleaved(
         &mut self,
         input: &[f32],
@@ -53,10 +63,15 @@ impl AudioGraphExecutor {
         num_in_channels: usize,
         num_out_channels: usize,
         frames: usize,
-    ) {
-        if self.schedule_data.is_none() || frames == 0 || !self.running {
+    ) -> ProcessStatus {
+        if !self.running {
             output.fill(0.0);
-            return;
+            return ProcessStatus::DropProcessor;
+        }
+
+        if self.schedule_data.is_none() || frames == 0 {
+            output.fill(0.0);
+            return ProcessStatus::Ok;
         };
 
         assert_eq!(input.len(), frames * num_in_channels);
@@ -130,15 +145,17 @@ impl AudioGraphExecutor {
             frames_processed += block_frames;
         }
 
-        if !self.running {
-            self.to_graph_tx.push(ExecutorToGraphMsg::Stopped).unwrap();
+        if self.running {
+            ProcessStatus::Ok
+        } else {
+            ProcessStatus::DropProcessor
         }
     }
 
     fn process_block(&mut self, block_frames: usize) {
         while let Ok(msg) = self.from_graph_rx.pop() {
             match msg {
-                GraphToExecutorMsg::NewSchedule(mut new_schedule_data) => {
+                ContextToProcessorMsg::NewSchedule(mut new_schedule_data) => {
                     assert_eq!(
                         new_schedule_data.schedule.max_block_frames(),
                         self.max_block_frames
@@ -159,17 +176,17 @@ impl AudioGraphExecutor {
                         }
 
                         self.to_graph_tx
-                            .push(ExecutorToGraphMsg::ReturnSchedule(old_schedule_data))
+                            .push(ProcessorToContextMsg::ReturnSchedule(old_schedule_data))
                             .unwrap();
                     }
 
-                    for (node_id, processor) in new_schedule_data.nodes_to_add.drain(..) {
+                    for (node_id, processor) in new_schedule_data.new_node_processors.drain(..) {
                         assert!(self.nodes.insert_at(node_id.0, processor).is_none());
                     }
 
                     self.schedule_data = Some(new_schedule_data);
                 }
-                GraphToExecutorMsg::Stop => {
+                ContextToProcessorMsg::Stop => {
                     self.running = false;
                 }
             }
@@ -205,51 +222,26 @@ impl AudioGraphExecutor {
     }
 }
 
-impl Drop for AudioGraphExecutor {
+impl Drop for FwProcessor {
     fn drop(&mut self) {
         // Make sure the nodes are not deallocated in the audio thread.
         let mut nodes = Arena::new();
         std::mem::swap(&mut nodes, &mut self.nodes);
 
-        let _ = self.to_graph_tx.push(ExecutorToGraphMsg::Dropped {
+        let _ = self.to_graph_tx.push(ProcessorToContextMsg::Dropped {
             nodes,
             _schedule_data: self.schedule_data.take(),
         });
     }
 }
 
-pub(crate) struct ScheduleHeapData {
-    schedule: CompiledSchedule,
-    nodes_to_remove: Vec<NodeID>,
-    pub removed_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor>)>,
-    nodes_to_add: Vec<(NodeID, Box<dyn AudioNodeProcessor>)>,
-}
-
-impl ScheduleHeapData {
-    pub fn new(
-        schedule: CompiledSchedule,
-        nodes_to_remove: Vec<NodeID>,
-        nodes_to_add: Vec<(NodeID, Box<dyn AudioNodeProcessor>)>,
-    ) -> Self {
-        let num_nodes_to_remove = nodes_to_remove.len();
-
-        Self {
-            schedule,
-            nodes_to_remove,
-            removed_node_processors: Vec::with_capacity(num_nodes_to_remove),
-            nodes_to_add,
-        }
-    }
-}
-
-pub(crate) enum GraphToExecutorMsg {
+pub(crate) enum ContextToProcessorMsg {
     NewSchedule(ScheduleHeapData),
     Stop,
 }
 
-pub(crate) enum ExecutorToGraphMsg {
+pub(crate) enum ProcessorToContextMsg {
     ReturnSchedule(ScheduleHeapData),
-    Stopped,
     Dropped {
         nodes: Arena<Box<dyn AudioNodeProcessor>>,
         _schedule_data: Option<ScheduleHeapData>,

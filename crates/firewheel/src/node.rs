@@ -2,6 +2,10 @@ use std::error::Error;
 
 use crate::SilenceMask;
 
+/// A globally unique identifier for a node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NodeID(pub(crate) thunderdome::Index);
+
 pub trait AudioNode: 'static {
     fn info(&self) -> AudioNodeInfo;
 

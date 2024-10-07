@@ -1,6 +1,6 @@
 use smallvec::SmallVec;
 
-use crate::SilenceMask;
+use crate::{node::AudioNodeProcessor, SilenceMask};
 
 use super::NodeID;
 
@@ -50,6 +50,30 @@ pub(super) struct OutBufferAssignment {
     /// how many times this buffer has been used before
     /// this assignment. Kept for debugging and visualization.
     pub _generation: usize,
+}
+
+pub struct ScheduleHeapData {
+    pub schedule: CompiledSchedule,
+    pub nodes_to_remove: Vec<NodeID>,
+    pub removed_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor>)>,
+    pub new_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor>)>,
+}
+
+impl ScheduleHeapData {
+    pub fn new(
+        schedule: CompiledSchedule,
+        nodes_to_remove: Vec<NodeID>,
+        new_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor>)>,
+    ) -> Self {
+        let num_nodes_to_remove = nodes_to_remove.len();
+
+        Self {
+            schedule,
+            nodes_to_remove,
+            removed_node_processors: Vec::with_capacity(num_nodes_to_remove),
+            new_node_processors,
+        }
+    }
 }
 
 /// A [CompiledSchedule] is the output of the graph compiler.
@@ -293,8 +317,9 @@ fn silence_mask_mut<'a>(buffer_silence_flags: &'a mut [bool], buffer_index: usiz
 #[cfg(test)]
 mod tests {
     use crate::{
+        context::Config,
+        graph::{AddEdgeError, AudioGraph, EdgeID, InPortIdx, OutPortIdx},
         node::DummyAudioNode,
-        server::{AddEdgeError, EdgeID, FirewheelServer, InPortIdx, OutPortIdx},
     };
 
     use super::*;
@@ -307,14 +332,18 @@ mod tests {
     //  └───┘  └───┘
     #[test]
     fn simplest_graph_compile_test() {
-        let mut graph = FirewheelServer::new(1, 1);
+        let mut graph = AudioGraph::new(&Config {
+            num_graph_inputs: 1,
+            num_graph_outputs: 1,
+            ..Default::default()
+        });
 
         let node0 = graph.graph_in_node();
         let node1 = graph.graph_out_node();
 
         let edge0 = graph.add_edge(node0, 0, node1, 0, false).unwrap();
 
-        let schedule = graph.compile().unwrap();
+        let schedule = graph.compile_internal().unwrap();
 
         dbg!(&schedule);
 
@@ -347,7 +376,11 @@ mod tests {
     //       └───┘         └───┘
     #[test]
     fn graph_compile_test_1() {
-        let mut graph = FirewheelServer::new(2, 2);
+        let mut graph = AudioGraph::new(&Config {
+            num_graph_inputs: 2,
+            num_graph_outputs: 2,
+            ..Default::default()
+        });
 
         let node0 = graph.graph_in_node();
         let node1 = graph.add_node(1, 2, DummyAudioNode);
@@ -369,7 +402,7 @@ mod tests {
         let edge9 = graph.add_edge(node5, 0, node6, 0, false).unwrap();
         let edge10 = graph.add_edge(node5, 1, node6, 1, false).unwrap();
 
-        let schedule = graph.compile().unwrap();
+        let schedule = graph.compile_internal().unwrap();
 
         dbg!(&schedule);
 
@@ -431,7 +464,11 @@ mod tests {
     //   └───┘         └───┘
     #[test]
     fn graph_compile_test_2() {
-        let mut graph = FirewheelServer::new(2, 2);
+        let mut graph = AudioGraph::new(&Config {
+            num_graph_inputs: 2,
+            num_graph_outputs: 2,
+            ..Default::default()
+        });
 
         let node0 = graph.graph_in_node();
         let node1 = graph.add_node(1, 1, DummyAudioNode);
@@ -449,7 +486,7 @@ mod tests {
         let edge5 = graph.add_edge(node4, 0, node5, 0, false).unwrap();
         let edge6 = graph.add_edge(node4, 2, node6, 0, false).unwrap();
 
-        let schedule = graph.compile().unwrap();
+        let schedule = graph.compile_internal().unwrap();
 
         dbg!(&schedule);
 
@@ -490,7 +527,7 @@ mod tests {
         node_id: NodeID,
         in_ports_that_should_clear: &[bool],
         schedule: &CompiledSchedule,
-        graph: &FirewheelServer<()>,
+        graph: &AudioGraph,
     ) {
         let node = graph.node_info(node_id).unwrap();
         let scheduled_node = schedule.schedule.iter().find(|&s| s.id == node_id).unwrap();
@@ -523,7 +560,7 @@ mod tests {
         }
     }
 
-    fn verify_edge(edge_id: EdgeID, graph: &FirewheelServer<()>, schedule: &CompiledSchedule) {
+    fn verify_edge(edge_id: EdgeID, graph: &AudioGraph, schedule: &CompiledSchedule) {
         let edge = graph.edge(edge_id).unwrap();
 
         let mut src_buffer_idx = None;
@@ -550,7 +587,11 @@ mod tests {
 
     #[test]
     fn many_to_one_detection() {
-        let mut graph = FirewheelServer::<()>::new(2, 1);
+        let mut graph = AudioGraph::new(&Config {
+            num_graph_inputs: 2,
+            num_graph_outputs: 1,
+            ..Default::default()
+        });
 
         let node1 = graph.graph_in_node();
         let node2 = graph.graph_out_node();
@@ -569,7 +610,11 @@ mod tests {
 
     #[test]
     fn cycle_detection() {
-        let mut graph = FirewheelServer::<()>::new(0, 2);
+        let mut graph = AudioGraph::new(&Config {
+            num_graph_inputs: 0,
+            num_graph_outputs: 2,
+            ..Default::default()
+        });
 
         let node1 = graph.add_node(1, 1, DummyAudioNode);
         let node2 = graph.add_node(2, 1, DummyAudioNode);

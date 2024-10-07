@@ -1,10 +1,13 @@
-mod backend;
+pub mod backend;
+mod context;
+pub mod graph;
 pub mod node;
-pub mod server;
+mod processor;
 mod silence_mask;
 pub mod util;
 
-pub use backend::AudioBackend;
+pub use context::*;
+pub use processor::FwProcessor;
 pub use silence_mask::SilenceMask;
 
 /// The maximum number of frames that can appear in a processing

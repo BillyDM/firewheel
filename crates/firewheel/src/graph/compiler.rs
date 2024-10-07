@@ -2,11 +2,13 @@ use smallvec::SmallVec;
 use std::{collections::VecDeque, rc::Rc};
 use thunderdome::Arena;
 
+use crate::node::NodeID;
+
 use super::error::CompileGraphError;
 
 mod schedule;
 
-pub use schedule::CompiledSchedule;
+pub use schedule::{CompiledSchedule, ScheduleHeapData};
 use schedule::{InBufferAssignment, OutBufferAssignment, ScheduledNode};
 
 pub struct NodeEntry<N> {
@@ -23,21 +25,17 @@ pub struct NodeEntry<N> {
 }
 
 impl<N> NodeEntry<N> {
-    pub fn new(num_inputs: u32, num_outputs: u32, weight: N) -> Self {
+    pub fn new(num_inputs: usize, num_outputs: usize, weight: N) -> Self {
         Self {
             id: NodeID(thunderdome::Index::DANGLING),
-            num_inputs,
-            num_outputs,
+            num_inputs: num_inputs as u32,
+            num_outputs: num_outputs as u32,
             weight,
             incoming: SmallVec::new(),
             outgoing: SmallVec::new(),
         }
     }
 }
-
-/// A globally unique identifier for a node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeID(pub(super) thunderdome::Index);
 
 /// The index for an input port on a particular [Node].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -157,10 +155,9 @@ pub fn cycle_detected<'a, N>(
     edges: &'a mut Arena<Edge>,
     graph_in_id: NodeID,
     graph_out_id: NodeID,
-    max_block_frames: usize,
 ) -> bool {
     if let Err(CompileGraphError::CycleDetected) =
-        GraphIR::<N>::preprocess(nodes, edges, graph_in_id, graph_out_id, max_block_frames)
+        GraphIR::<N>::preprocess(nodes, edges, graph_in_id, graph_out_id, 0)
             .sort_topologically(false)
     {
         true
@@ -319,7 +316,7 @@ impl<'a, N> GraphIR<'a, N> {
                 .output_buffers
                 .reserve_exact(node_entry.num_outputs as usize);
 
-            for port_idx in 0..node_entry.num_inputs {
+            for port_idx in 0..node_entry.num_inputs as u32 {
                 let port_idx = InPortIdx(port_idx);
 
                 let edges: SmallVec<[&Edge; 4]> = node_entry
@@ -357,7 +354,7 @@ impl<'a, N> GraphIR<'a, N> {
                 }
             }
 
-            for port_idx in 0..node_entry.num_outputs {
+            for port_idx in 0..node_entry.num_outputs as u32 {
                 let port_idx = OutPortIdx(port_idx);
 
                 let edges: SmallVec<[&Edge; 4]> = node_entry
