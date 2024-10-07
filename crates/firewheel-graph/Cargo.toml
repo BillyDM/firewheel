@@ -10,7 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-firewheel-core = { path = "../firewheel-core" }
+firewheel-core = { path = "../firewheel-core", version = "0.1" }
 log.workspace = true
 rtrb.workspace = true
 thiserror.workspace = true

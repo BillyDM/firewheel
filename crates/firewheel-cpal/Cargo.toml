@@ -10,8 +10,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-firewheel-core = { path = "../firewheel-core" }
-firewheel-graph = { path = "../firewheel-graph" }
+firewheel-core = { path = "../firewheel-core", version = "0.1" }
+firewheel-graph = { path = "../firewheel-graph", version = "0.1" }
 log.workspace = true
 rtrb.workspace = true
 thiserror.workspace = true

@@ -29,9 +29,9 @@ default = ["cpal"]
 cpal = ["dep:firewheel-cpal"]
 
 [dependencies]
-firewheel-core = { path = "crates/firewheel-core" }
-firewheel-graph = { path = "crates/firewheel-graph" }
-firewheel-cpal = { path = "crates/firewheel-cpal", optional = true }
+firewheel-core = { path = "crates/firewheel-core", version = "0.1" }
+firewheel-graph = { path = "crates/firewheel-graph", version = "0.1" }
+firewheel-cpal = { path = "crates/firewheel-cpal", version = "0.1", optional = true }
 
 [workspace.dependencies]
 log = "0.4.22"
