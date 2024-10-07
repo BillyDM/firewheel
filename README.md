@@ -31,4 +31,4 @@ Firewheel is intended to be the default audio engine powering the [Bevy](https:/
 
 ## Get Involved
 
-Join the discussion in the [Bevy Discord Server]() under the `working-groups -> Better Audio` channel!
+Join the discussion in the [Bevy Discord Server](https://discord.gg/bevy) under the `working-groups -> Better Audio` channel!
