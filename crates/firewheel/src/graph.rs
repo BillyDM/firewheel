@@ -444,7 +444,7 @@ impl AudioGraph {
 
     pub(crate) fn compile(
         &mut self,
-        sample_rate: f64,
+        sample_rate: u32,
     ) -> Result<ScheduleHeapData, CompileGraphError> {
         let schedule = self.compile_internal()?;
 

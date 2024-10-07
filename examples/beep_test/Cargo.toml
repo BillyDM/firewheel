@@ -3,3 +3,8 @@ name = "beep_test"
 version = "0.1.0"
 edition = "2021"
 publish = false
+
+[dependencies]
+firewheel-cpal = { path = "../../crates/firewheel-cpal" }
+log.workspace = true
+simple-log = "2.1.0"

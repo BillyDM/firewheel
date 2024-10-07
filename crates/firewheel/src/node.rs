@@ -12,7 +12,7 @@ pub trait AudioNode: 'static {
     /// Activate the audio node for processing.
     fn activate(
         &mut self,
-        sample_rate: f64,
+        sample_rate: u32,
         max_block_frames: usize,
         num_inputs: usize,
         num_outputs: usize,
@@ -100,7 +100,7 @@ impl AudioNode for DummyAudioNode {
     /// Activate the audio node for processing.
     fn activate(
         &mut self,
-        _sample_rate: f64,
+        _sample_rate: u32,
         _max_block_frames: usize,
         _num_inputs: usize,
         _num_outputs: usize,

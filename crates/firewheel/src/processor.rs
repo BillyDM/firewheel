@@ -7,7 +7,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProcessStatus {
+pub enum FwProcessorStatus {
     Ok,
     /// If this is returned, then the [`FwProcessor`] must be dropped.
     DropProcessor,
@@ -63,15 +63,25 @@ impl FwProcessor {
         num_in_channels: usize,
         num_out_channels: usize,
         frames: usize,
-    ) -> ProcessStatus {
+    ) -> FwProcessorStatus {
         if !self.running {
             output.fill(0.0);
-            return ProcessStatus::DropProcessor;
+            return FwProcessorStatus::DropProcessor;
+        }
+
+        if self.schedule_data.is_none() {
+            // See if we got a new schedule.
+            self.poll_messages();
+
+            if !self.running {
+                output.fill(0.0);
+                return FwProcessorStatus::DropProcessor;
+            }
         }
 
         if self.schedule_data.is_none() || frames == 0 {
             output.fill(0.0);
-            return ProcessStatus::Ok;
+            return FwProcessorStatus::Ok;
         };
 
         assert_eq!(input.len(), frames * num_in_channels);
@@ -146,13 +156,13 @@ impl FwProcessor {
         }
 
         if self.running {
-            ProcessStatus::Ok
+            FwProcessorStatus::Ok
         } else {
-            ProcessStatus::DropProcessor
+            FwProcessorStatus::DropProcessor
         }
     }
 
-    fn process_block(&mut self, block_frames: usize) {
+    fn poll_messages(&mut self) {
         while let Ok(msg) = self.from_graph_rx.pop() {
             match msg {
                 ContextToProcessorMsg::NewSchedule(mut new_schedule_data) => {
@@ -191,6 +201,10 @@ impl FwProcessor {
                 }
             }
         }
+    }
+
+    fn process_block(&mut self, block_frames: usize) {
+        self.poll_messages();
 
         if !self.running {
             return;

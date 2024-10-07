@@ -8,7 +8,7 @@ use crate::{
 };
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 256;
-const CLOSE_STREAM_TIMEOUT: Duration = Duration::from_secs(5);
+const CLOSE_STREAM_TIMEOUT: Duration = Duration::from_secs(3);
 const CLOSE_STREAM_SLEEP_INTERVAL: Duration = Duration::from_millis(2);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -57,7 +57,7 @@ impl InactiveFwCtx {
 
     pub fn activate(
         self,
-        sample_rate: f64,
+        sample_rate: u32,
         num_stream_in_channels: usize,
         num_stream_out_channels: usize,
     ) -> (ActiveFwCtx, FwProcessor) {
@@ -98,7 +98,7 @@ struct ActiveFwCtxInner {
     to_executor_tx: rtrb::Producer<ContextToProcessorMsg>,
     from_executor_rx: rtrb::Consumer<ProcessorToContextMsg>,
 
-    sample_rate: f64,
+    sample_rate: u32,
 }
 
 impl ActiveFwCtxInner {
@@ -146,39 +146,48 @@ impl ActiveFwCtxInner {
     ///
     /// This will block the thread until either the processor has
     /// been successfully dropped or a timeout has been reached.
-    fn deactivate(mut self) -> InactiveFwCtx {
+    ///
+    /// If the stream is still currently running, then the context
+    /// will attempt to cleanly deactivate the processor. If not,
+    /// then the context will wait for either the processor to be
+    /// dropped or a timeout being reached.
+    fn deactivate(mut self, stream_is_running: bool) -> InactiveFwCtx {
         let start = Instant::now();
 
         let mut dropped = false;
 
-        loop {
-            if let Err(_) = self.to_executor_tx.push(ContextToProcessorMsg::Stop) {
-                log::error!("Failed to send stop signal: Firewheel message channel is full");
+        if stream_is_running {
+            loop {
+                if let Err(_) = self.to_executor_tx.push(ContextToProcessorMsg::Stop) {
+                    log::error!("Failed to send stop signal: Firewheel message channel is full");
 
-                // TODO: I don't think sleep is supported in WASM, so we will
-                // need to figure out something if that's the case.
-                std::thread::sleep(CLOSE_STREAM_SLEEP_INTERVAL);
+                    // TODO: I don't think sleep is supported in WASM, so we will
+                    // need to figure out something if that's the case.
+                    std::thread::sleep(CLOSE_STREAM_SLEEP_INTERVAL);
 
-                if start.elapsed() > CLOSE_STREAM_TIMEOUT {
-                    log::error!("Timed out trying to send stop signal to firewheel processor");
-                    dropped = true;
+                    if start.elapsed() > CLOSE_STREAM_TIMEOUT {
+                        log::error!("Timed out trying to send stop signal to firewheel processor");
+                        dropped = true;
+                        break;
+                    }
+                } else {
                     break;
                 }
-            } else {
-                break;
             }
         }
 
         while !dropped {
             self.update_internal(&mut dropped);
 
-            // TODO: I don't think sleep is supported in WASM, so we will
-            // need to figure out something if that's the case.
-            std::thread::sleep(CLOSE_STREAM_SLEEP_INTERVAL);
+            if !dropped {
+                // TODO: I don't think sleep is supported in WASM, so we will
+                // need to figure out something if that's the case.
+                std::thread::sleep(CLOSE_STREAM_SLEEP_INTERVAL);
 
-            if start.elapsed() > CLOSE_STREAM_TIMEOUT {
-                log::error!("Timed out waiting for firewheel processor to drop");
-                dropped = true;
+                if start.elapsed() > CLOSE_STREAM_TIMEOUT {
+                    log::error!("Timed out waiting for firewheel processor to drop");
+                    dropped = true;
+                }
             }
         }
 
@@ -220,8 +229,14 @@ impl ActiveFwCtx {
     /// This must be called reguarly (i.e. once every frame).
     pub fn update(mut self) -> UpdateStatus {
         match self.inner.as_mut().unwrap().update() {
-            UpdateStatusInternal::Ok => UpdateStatus::Ok(self),
-            UpdateStatusInternal::GraphError(e) => UpdateStatus::GraphError(self, e),
+            UpdateStatusInternal::Ok => UpdateStatus::Ok {
+                cx: self,
+                graph_error: None,
+            },
+            UpdateStatusInternal::GraphError(e) => UpdateStatus::Ok {
+                cx: self,
+                graph_error: Some(e),
+            },
             UpdateStatusInternal::Deactivated => UpdateStatus::Deactivated(InactiveFwCtx {
                 graph: self.inner.take().unwrap().graph,
             }),
@@ -232,23 +247,30 @@ impl ActiveFwCtx {
     ///
     /// This will block the thread until either the processor has
     /// been successfully dropped or a timeout has been reached.
-    pub fn deactivate(mut self) -> InactiveFwCtx {
+    ///
+    /// If the stream is still currently running, then the context
+    /// will attempt to cleanly deactivate the processor. If not,
+    /// then the context will wait for either the processor to be
+    /// dropped or a timeout being reached.
+    pub fn deactivate(mut self, stream_is_running: bool) -> InactiveFwCtx {
         let inner = self.inner.take().unwrap();
-        inner.deactivate()
+        inner.deactivate(stream_is_running)
     }
 }
 
 impl Drop for ActiveFwCtx {
     fn drop(&mut self) {
         if let Some(inner) = self.inner.take() {
-            inner.deactivate();
+            inner.deactivate(true);
         }
     }
 }
 
 pub enum UpdateStatus {
-    Ok(ActiveFwCtx),
-    GraphError(ActiveFwCtx, CompileGraphError),
+    Ok {
+        cx: ActiveFwCtx,
+        graph_error: Option<CompileGraphError>,
+    },
     Deactivated(InactiveFwCtx),
 }
 

@@ -5,5 +5,7 @@ edition = "2021"
 
 [dependencies]
 firewheel = { path = "../firewheel" }
+log.workspace = true
+rtrb.workspace = true
+thiserror.workspace = true
 cpal = "0.15.3"
-log = "0.4.22"

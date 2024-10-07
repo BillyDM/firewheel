@@ -169,7 +169,7 @@ pub fn deinterleave_stereo(out_l: &mut [f32], out_r: &mut [f32], interleaved: &[
 /// This can be useful for realtime code which needs a Vec
 /// of references without allocating. For example:
 /// ```rust
-/// # use firewheel_core::util::recycle_vec;
+/// # use firewheel::util::recycle_vec;
 /// #
 /// struct Foo {
 ///     buffer_list: Option<Vec<&'static Vec<f32>>>,
