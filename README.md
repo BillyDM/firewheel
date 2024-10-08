@@ -17,7 +17,7 @@ Firewheel is a flexible, high-performance, and libre audio engine for games.
         * disk/network streaming (TODO)
     * effects like filters, delays (echos), clippers, and convolutional reverbs (TODO)
     * spatial positioning (make a sound "emanate" from a point in 3d space) (TODO)
-    * Decibel meter
+    * Decibel meter (TODO)
 * Custom audio node API allowing for a plethora of 3rd party generators and effects
 * Basic [CLAP](https://cleveraudio.org/) plugin hosting (non-WASM only) (TODO)
 * Automatable parameters on nodes, with support for automation curves (TODO)

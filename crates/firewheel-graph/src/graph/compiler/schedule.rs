@@ -314,7 +314,7 @@ fn silence_mask_mut<'a>(buffer_silence_flags: &'a mut [bool], buffer_index: usiz
 #[cfg(test)]
 mod tests {
     use crate::{
-        factory_nodes::dummy::DummyAudioNode,
+        factory_nodes::DummyAudioNode,
         graph::{AddEdgeError, AudioGraph, AudioGraphConfig, EdgeID, InPortIdx, OutPortIdx},
     };
 

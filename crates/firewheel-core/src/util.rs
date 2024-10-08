@@ -204,3 +204,12 @@ pub fn recycle_vec<A, B>(mut v: Vec<A>) -> Vec<B> {
     v.clear();
     v.into_iter().map(|_| unreachable!()).collect()
 }
+
+/// A convenience method to clear all output channels to `0.0` (silence)
+pub fn clear_all_outputs(outputs: &mut [&mut [f32]], out_silence_mask: &mut SilenceMask) {
+    for out in outputs.iter_mut() {
+        out.fill(0.0);
+    }
+
+    *out_silence_mask = SilenceMask::new_all_silent(outputs.len());
+}
