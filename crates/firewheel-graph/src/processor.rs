@@ -26,9 +26,6 @@ pub struct FwProcessor<C: 'static> {
 
     max_block_frames: usize,
 
-    stream_in_buffer_list: Option<Vec<&'static mut [f32]>>,
-    stream_out_buffer_list: Option<Vec<&'static [f32]>>,
-
     running: bool,
 }
 
@@ -42,6 +39,9 @@ impl<C> FwProcessor<C> {
         max_block_frames: usize,
         user_cx: C,
     ) -> Self {
+        assert!(num_stream_in_channels <= 64);
+        assert!(num_stream_out_channels <= 64);
+
         Self {
             nodes: Arena::with_capacity(node_capacity * 2),
             schedule_data: None,
@@ -49,8 +49,6 @@ impl<C> FwProcessor<C> {
             from_graph_rx,
             to_graph_tx,
             max_block_frames,
-            stream_in_buffer_list: Some(Vec::with_capacity(num_stream_in_channels * 2)),
-            stream_out_buffer_list: Some(Vec::with_capacity(num_stream_out_channels * 2)),
             running: true,
         }
     }
@@ -102,7 +100,6 @@ impl<C> FwProcessor<C> {
                 .prepare_graph_inputs(
                     block_frames,
                     num_in_channels,
-                    &mut self.stream_in_buffer_list,
                     |channels: &mut [&mut [f32]]| -> SilenceMask {
                         firewheel_core::util::deinterleave(
                             channels.iter_mut().map(|ch| &mut **ch),
@@ -124,7 +121,6 @@ impl<C> FwProcessor<C> {
                 .read_graph_outputs(
                     block_frames,
                     num_out_channels,
-                    &mut self.stream_out_buffer_list,
                     |channels: &[&[f32]], silence_mask| {
                         if channels.len() == 2 && num_out_channels == 2 {
                             // Use optimized stereo interleaving since it is the most

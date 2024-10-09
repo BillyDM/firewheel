@@ -8,9 +8,9 @@ impl<C> AudioNode<C> for DummyAudioNode {
     fn info(&self) -> AudioNodeInfo {
         AudioNodeInfo {
             num_min_supported_inputs: 0,
-            num_max_supported_inputs: u32::MAX,
+            num_max_supported_inputs: 64,
             num_min_supported_outputs: 0,
-            num_max_supported_outputs: u32::MAX,
+            num_max_supported_outputs: 64,
         }
     }
 

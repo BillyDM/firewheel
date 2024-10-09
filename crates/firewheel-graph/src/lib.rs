@@ -1,6 +1,6 @@
 pub mod backend;
+pub mod basic_nodes;
 pub mod context;
-pub mod factory_nodes;
 pub mod graph;
 pub mod processor;
 

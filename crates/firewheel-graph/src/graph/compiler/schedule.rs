@@ -1,6 +1,7 @@
+use arrayvec::ArrayVec;
 use smallvec::SmallVec;
 
-use firewheel_core::{node::AudioNodeProcessor, util::recycle_vec, SilenceMask};
+use firewheel_core::{node::AudioNodeProcessor, SilenceMask};
 
 use super::NodeID;
 
@@ -87,9 +88,6 @@ pub struct CompiledSchedule {
 
     buffers: Vec<f32>,
     buffer_silence_flags: Vec<bool>,
-
-    in_buffer_list: Option<Vec<&'static [f32]>>,
-    out_buffer_list: Option<Vec<&'static mut [f32]>>,
 }
 
 impl CompiledSchedule {
@@ -99,8 +97,6 @@ impl CompiledSchedule {
         graph_out_idx: usize,
         max_block_frames: usize,
         num_buffers: usize,
-        max_in_buffers: usize,
-        max_out_buffers: usize,
     ) -> Self {
         Self {
             schedule,
@@ -109,8 +105,6 @@ impl CompiledSchedule {
             max_block_frames,
             buffers: vec![0.0; num_buffers * max_block_frames],
             buffer_silence_flags: vec![false; num_buffers],
-            in_buffer_list: Some(Vec::with_capacity(max_in_buffers)),
-            out_buffer_list: Some(Vec::with_capacity(max_out_buffers)),
         }
     }
 
@@ -122,16 +116,13 @@ impl CompiledSchedule {
         &mut self,
         frames: usize,
         num_stream_inputs: usize,
-        stream_in_buffer_list: &mut Option<Vec<&'static mut [f32]>>,
         fill_inputs: impl FnOnce(&mut [&mut [f32]]) -> SilenceMask,
     ) {
         let frames = frames.min(self.max_block_frames);
 
         let graph_in_node = &self.schedule[self.graph_in_idx];
 
-        // This trick allows us to create a Vec of references without
-        // allocating any memory.
-        let mut inputs: Vec<&mut [f32]> = recycle_vec(stream_in_buffer_list.take().unwrap());
+        let mut inputs: ArrayVec<&mut [f32], 64> = ArrayVec::new();
 
         let fill_input_len = num_stream_inputs.min(graph_in_node.output_buffers.len());
 
@@ -161,24 +152,19 @@ impl CompiledSchedule {
                 *silence_mask_mut(&mut self.buffer_silence_flags, b.buffer_index) = true;
             }
         }
-
-        *stream_in_buffer_list = Some(recycle_vec(inputs));
     }
 
     pub fn read_graph_outputs(
         &mut self,
         frames: usize,
         num_stream_outputs: usize,
-        stream_out_buffer_list: &mut Option<Vec<&'static [f32]>>,
         read_outputs: impl FnOnce(&[&[f32]], SilenceMask),
     ) {
         let frames = frames.min(self.max_block_frames);
 
         let graph_out_node = &self.schedule[self.graph_out_idx];
 
-        // This trick allows us to create a Vec of references without
-        // allocating any memory.
-        let mut outputs: Vec<&[f32]> = recycle_vec(stream_out_buffer_list.take().unwrap());
+        let mut outputs: ArrayVec<&[f32], 64> = ArrayVec::new();
 
         let mut silence_mask = SilenceMask::NONE_SILENT;
 
@@ -200,8 +186,6 @@ impl CompiledSchedule {
         }
 
         (read_outputs)(outputs.as_slice(), silence_mask);
-
-        *stream_out_buffer_list = Some(recycle_vec(outputs));
     }
 
     pub fn process(
@@ -211,10 +195,8 @@ impl CompiledSchedule {
     ) {
         let frames = frames.min(self.max_block_frames);
 
-        // This trick allows us to create a Vec of references without
-        // allocating any memory.
-        let mut inputs: Vec<&[f32]> = recycle_vec(self.in_buffer_list.take().unwrap());
-        let mut outputs: Vec<&mut [f32]> = recycle_vec(self.out_buffer_list.take().unwrap());
+        let mut inputs: ArrayVec<&[f32], 64> = ArrayVec::new();
+        let mut outputs: ArrayVec<&mut [f32], 64> = ArrayVec::new();
 
         for scheduled_node in self.schedule.iter() {
             let mut in_silence_mask = SilenceMask::NONE_SILENT;
@@ -260,9 +242,6 @@ impl CompiledSchedule {
                     out_silence_mask.is_channel_silent(i);
             }
         }
-
-        self.in_buffer_list = Some(recycle_vec(inputs));
-        self.out_buffer_list = Some(recycle_vec(outputs));
     }
 }
 
@@ -314,7 +293,7 @@ fn silence_mask_mut<'a>(buffer_silence_flags: &'a mut [bool], buffer_index: usiz
 #[cfg(test)]
 mod tests {
     use crate::{
-        factory_nodes::DummyAudioNode,
+        basic_nodes::DummyAudioNode,
         graph::{AddEdgeError, AudioGraph, AudioGraphConfig, EdgeID, InPortIdx, OutPortIdx},
     };
 

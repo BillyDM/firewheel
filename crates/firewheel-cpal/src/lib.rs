@@ -3,7 +3,7 @@ use std::{fmt::Debug, time::Duration};
 use cpal::traits::{DeviceTrait, HostTrait};
 use firewheel_graph::{
     backend::DeviceInfo,
-    graph::{AudioGraphConfig, CompileGraphError},
+    graph::{AudioGraph, AudioGraphConfig, CompileGraphError},
     processor::{FwProcessor, FwProcessorStatus},
     ActiveFwCtx, InactiveFwCtx,
 };
@@ -22,12 +22,12 @@ impl<C: 'static + Send> InactiveFwCpalCtx<C> {
         }
     }
 
-    pub fn cx(&self) -> &InactiveFwCtx<C> {
-        &self.cx
+    pub fn graph(&self) -> &AudioGraph<C> {
+        self.cx.graph()
     }
 
-    pub fn cx_mut(&mut self) -> &mut InactiveFwCtx<C> {
-        &mut self.cx
+    pub fn graph_mut(&mut self) -> &mut AudioGraph<C> {
+        self.cx.graph_mut()
     }
 
     pub fn available_output_devices(&self) -> Vec<DeviceInfo> {
@@ -284,12 +284,12 @@ pub struct ActiveFwCpalCtx<C: 'static> {
 }
 
 impl<C> ActiveFwCpalCtx<C> {
-    pub fn cx(&self) -> &ActiveFwCtx<C> {
-        &self.inner.as_ref().unwrap().cx
+    pub fn graph(&self) -> &AudioGraph<C> {
+        self.inner.as_ref().unwrap().cx.graph()
     }
 
-    pub fn cx_mut(&mut self) -> &mut ActiveFwCtx<C> {
-        &mut self.inner.as_mut().unwrap().cx
+    pub fn graph_mut(&mut self) -> &mut AudioGraph<C> {
+        self.inner.as_mut().unwrap().cx.graph_mut()
     }
 
     pub fn out_device_name(&self) -> &str {

@@ -198,6 +198,9 @@ impl<'a, N> GraphIR<'a, N> {
         assert!(nodes.contains(graph_out_id.0));
 
         for (_, node) in nodes.iter_mut() {
+            assert!(node.num_inputs <= 64);
+            assert!(node.num_outputs <= 64);
+
             node.incoming.clear();
             node.outgoing.clear();
         }
@@ -406,8 +409,6 @@ impl<'a, N> GraphIR<'a, N> {
             self.graph_out_idx,
             self.max_block_frames,
             self.max_num_buffers,
-            self.max_in_buffers,
-            self.max_out_buffers,
         )
     }
 }

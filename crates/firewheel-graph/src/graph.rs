@@ -4,7 +4,7 @@ mod error;
 use ahash::{AHashMap, AHashSet};
 use thunderdome::Arena;
 
-use crate::factory_nodes::DummyAudioNode;
+use crate::basic_nodes::DummyAudioNode;
 use firewheel_core::node::{AudioNode, AudioNodeProcessor};
 
 pub(crate) use self::compiler::{CompiledSchedule, ScheduleHeapData};

@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use firewheel::{factory_nodes::beep_test::BeepTestNode, InactiveFwCpalCtx, UpdateStatus};
+use firewheel::{basic_nodes::beep_test::BeepTestNode, InactiveFwCpalCtx, UpdateStatus};
 
 const BEEP_FREQUENCY_HZ: f32 = 440.0;
 const BEEP_GAIN_DB: f32 = -18.0;
@@ -14,7 +14,7 @@ fn main() {
 
     let mut cx = InactiveFwCpalCtx::<()>::new(Default::default());
 
-    let graph = cx.cx_mut().graph_mut();
+    let graph = cx.graph_mut();
     let beep_test_node = graph.add_node(0, 2, BeepTestNode::new(BEEP_FREQUENCY_HZ, BEEP_GAIN_DB));
     graph
         .add_edge(beep_test_node, 0, graph.graph_out_node(), 0, false)

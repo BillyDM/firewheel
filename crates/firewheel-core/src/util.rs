@@ -161,50 +161,6 @@ pub fn deinterleave_stereo(out_l: &mut [f32], out_r: &mut [f32], interleaved: &[
     }
 }
 
-/// Recycle the allocation of one Vec for another Vec.
-///
-/// Note, this only works if the types `A` and `B` have the
-/// same size.
-///
-/// This can be useful for realtime code which needs a Vec
-/// of references without allocating. For example:
-/// ```rust
-/// # use firewheel_core::util::recycle_vec;
-/// #
-/// struct Foo {
-///     buffer_list: Option<Vec<&'static Vec<f32>>>,
-/// }
-///
-/// impl Foo {
-///     pub fn new() -> Self {
-///         Self { buffer_list: Some(Vec::with_capacity(100)) }
-///     }
-///
-///     pub fn realtime_function(&mut self) {
-///         // No allocations or deallocations are made here!
-///         let mut buffer_list: Vec<&Vec<f32>> =
-///             recycle_vec(self.buffer_list.take().unwrap());
-///
-///         // ... use buffer_list ...
-///         assert!(buffer_list.capacity() >= 100);
-///
-///         // Put the buffer back so the allocation can be used again
-///         // for the next call to `realtime_function()`.
-///         self.buffer_list = Some(recycle_vec(buffer_list));
-///     }
-/// }
-///
-/// let mut foo = Foo::new();
-/// foo.realtime_function();
-/// foo.realtime_function();
-/// ```
-pub fn recycle_vec<A, B>(mut v: Vec<A>) -> Vec<B> {
-    debug_assert_eq!(std::mem::size_of::<A>(), std::mem::size_of::<B>());
-
-    v.clear();
-    v.into_iter().map(|_| unreachable!()).collect()
-}
-
 /// A convenience method to clear all output channels to `0.0` (silence)
 pub fn clear_all_outputs(outputs: &mut [&mut [f32]], out_silence_mask: &mut SilenceMask) {
     for out in outputs.iter_mut() {
