@@ -1,8 +1,11 @@
-use firewheel_core::node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo};
+use firewheel_core::{
+    node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo},
+    BlockFrames,
+};
 
 pub struct MonoToStereoNode;
 
-impl<C> AudioNode<C> for MonoToStereoNode {
+impl<C, const MBF: usize> AudioNode<C, MBF> for MonoToStereoNode {
     fn info(&self) -> AudioNodeInfo {
         AudioNodeInfo {
             num_min_supported_inputs: 1,
@@ -15,31 +18,32 @@ impl<C> AudioNode<C> for MonoToStereoNode {
     fn activate(
         &mut self,
         _sample_rate: u32,
-        _max_block_frames: usize,
         _num_inputs: usize,
         _num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn std::error::Error>> {
+    ) -> Result<Box<dyn AudioNodeProcessor<C, MBF>>, Box<dyn std::error::Error>> {
         Ok(Box::new(MonoToStereoProcessor))
     }
 }
 
 struct MonoToStereoProcessor;
 
-impl<C> AudioNodeProcessor<C> for MonoToStereoProcessor {
+impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for MonoToStereoProcessor {
     fn process(
         &mut self,
-        _frames: usize,
+        frames: BlockFrames<MBF>,
         proc_info: ProcInfo<C>,
-        inputs: &[&[f32]],
-        outputs: &mut [&mut [f32]],
+        inputs: &[&[f32; MBF]],
+        outputs: &mut [&mut [f32; MBF]],
     ) {
         if proc_info.in_silence_mask.is_channel_silent(0) {
-            firewheel_core::util::clear_all_outputs(outputs, proc_info.out_silence_mask);
+            firewheel_core::util::clear_all_outputs(frames, outputs, proc_info.out_silence_mask);
             return;
         }
 
+        let frames = frames.get();
+
         let input = inputs[0];
-        outputs[0].copy_from_slice(input);
-        outputs[1].copy_from_slice(input);
+        outputs[0][..frames].copy_from_slice(&input[..frames]);
+        outputs[1][..frames].copy_from_slice(&input[..frames]);
     }
 }

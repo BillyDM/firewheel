@@ -11,22 +11,22 @@ const CHANNEL_CAPACITY: usize = 16;
 const CLOSE_STREAM_TIMEOUT: Duration = Duration::from_secs(3);
 const CLOSE_STREAM_SLEEP_INTERVAL: Duration = Duration::from_millis(2);
 
-pub struct InactiveFwCtx<C> {
-    graph: AudioGraph<C>,
+pub struct InactiveFwCtx<C, const MBF: usize> {
+    graph: AudioGraph<C, MBF>,
 }
 
-impl<C: 'static> InactiveFwCtx<C> {
+impl<C: 'static, const MBF: usize> InactiveFwCtx<C, MBF> {
     pub fn new(graph_config: AudioGraphConfig) -> Self {
         Self {
             graph: AudioGraph::new(&graph_config),
         }
     }
 
-    pub fn graph(&self) -> &AudioGraph<C> {
+    pub fn graph(&self) -> &AudioGraph<C, MBF> {
         &self.graph
     }
 
-    pub fn graph_mut(&mut self) -> &mut AudioGraph<C> {
+    pub fn graph_mut(&mut self) -> &mut AudioGraph<C, MBF> {
         &mut self.graph
     }
 
@@ -36,11 +36,11 @@ impl<C: 'static> InactiveFwCtx<C> {
         num_stream_in_channels: usize,
         num_stream_out_channels: usize,
         user_cx: C,
-    ) -> (ActiveFwCtx<C>, FwProcessor<C>) {
+    ) -> (ActiveFwCtx<C, MBF>, FwProcessor<C, MBF>) {
         let (to_executor_tx, from_graph_rx) =
-            rtrb::RingBuffer::<ContextToProcessorMsg<C>>::new(CHANNEL_CAPACITY);
+            rtrb::RingBuffer::<ContextToProcessorMsg<C, MBF>>::new(CHANNEL_CAPACITY);
         let (to_graph_tx, from_executor_rx) =
-            rtrb::RingBuffer::<ProcessorToContextMsg<C>>::new(CHANNEL_CAPACITY);
+            rtrb::RingBuffer::<ProcessorToContextMsg<C, MBF>>::new(CHANNEL_CAPACITY);
 
         let processor = FwProcessor::new(
             from_graph_rx,
@@ -48,7 +48,6 @@ impl<C: 'static> InactiveFwCtx<C> {
             self.graph.current_node_capacity(),
             num_stream_in_channels,
             num_stream_out_channels,
-            self.graph.max_block_frames(),
             user_cx,
         );
 
@@ -66,19 +65,19 @@ impl<C: 'static> InactiveFwCtx<C> {
     }
 }
 
-struct ActiveFwCtxInner<C> {
-    pub graph: AudioGraph<C>,
+struct ActiveFwCtxInner<C, const MBF: usize> {
+    pub graph: AudioGraph<C, MBF>,
 
     // TODO: Do research on whether `rtrb` is compatible with
     // webassembly. If not, use conditional compilation to
     // use a different channel type when targeting webassembly.
-    to_executor_tx: rtrb::Producer<ContextToProcessorMsg<C>>,
-    from_executor_rx: rtrb::Consumer<ProcessorToContextMsg<C>>,
+    to_executor_tx: rtrb::Producer<ContextToProcessorMsg<C, MBF>>,
+    from_executor_rx: rtrb::Consumer<ProcessorToContextMsg<C, MBF>>,
 
     sample_rate: u32,
 }
 
-impl<C: 'static> ActiveFwCtxInner<C> {
+impl<C: 'static, const MBF: usize> ActiveFwCtxInner<C, MBF> {
     /// Update the firewheel context.
     ///
     /// This must be called reguarly (i.e. once every frame).
@@ -129,7 +128,7 @@ impl<C: 'static> ActiveFwCtxInner<C> {
     /// will attempt to cleanly deactivate the processor. If not,
     /// then the context will wait for either the processor to be
     /// dropped or a timeout being reached.
-    fn deactivate(mut self, stream_is_running: bool) -> (InactiveFwCtx<C>, Option<C>) {
+    fn deactivate(mut self, stream_is_running: bool) -> (InactiveFwCtx<C, MBF>, Option<C>) {
         let start = Instant::now();
 
         let mut dropped = false;
@@ -191,23 +190,23 @@ impl<C: 'static> ActiveFwCtxInner<C> {
     }
 }
 
-pub struct ActiveFwCtx<C: 'static> {
-    inner: Option<ActiveFwCtxInner<C>>,
+pub struct ActiveFwCtx<C: 'static, const MBF: usize> {
+    inner: Option<ActiveFwCtxInner<C, MBF>>,
 }
 
-impl<C: 'static> ActiveFwCtx<C> {
-    pub fn graph(&self) -> &AudioGraph<C> {
+impl<C: 'static, const MBF: usize> ActiveFwCtx<C, MBF> {
+    pub fn graph(&self) -> &AudioGraph<C, MBF> {
         &self.inner.as_ref().unwrap().graph
     }
 
-    pub fn graph_mut(&mut self) -> &mut AudioGraph<C> {
+    pub fn graph_mut(&mut self) -> &mut AudioGraph<C, MBF> {
         &mut self.inner.as_mut().unwrap().graph
     }
 
     /// Update the firewheel context.
     ///
     /// This must be called reguarly (i.e. once every frame).
-    pub fn update(mut self) -> UpdateStatus<C> {
+    pub fn update(mut self) -> UpdateStatus<C, MBF> {
         match self.inner.as_mut().unwrap().update() {
             UpdateStatusInternal::Ok => UpdateStatus::Ok {
                 cx: self,
@@ -235,13 +234,13 @@ impl<C: 'static> ActiveFwCtx<C> {
     /// will attempt to cleanly deactivate the processor. If not,
     /// then the context will wait for either the processor to be
     /// dropped or a timeout being reached.
-    pub fn deactivate(mut self, stream_is_running: bool) -> (InactiveFwCtx<C>, Option<C>) {
+    pub fn deactivate(mut self, stream_is_running: bool) -> (InactiveFwCtx<C, MBF>, Option<C>) {
         let inner = self.inner.take().unwrap();
         inner.deactivate(stream_is_running)
     }
 }
 
-impl<C: 'static> Drop for ActiveFwCtx<C> {
+impl<C: 'static, const MBF: usize> Drop for ActiveFwCtx<C, MBF> {
     fn drop(&mut self) {
         if let Some(inner) = self.inner.take() {
             inner.deactivate(true);
@@ -249,13 +248,13 @@ impl<C: 'static> Drop for ActiveFwCtx<C> {
     }
 }
 
-pub enum UpdateStatus<C: 'static> {
+pub enum UpdateStatus<C: 'static, const MBF: usize> {
     Ok {
-        cx: ActiveFwCtx<C>,
+        cx: ActiveFwCtx<C, MBF>,
         graph_error: Option<CompileGraphError>,
     },
     Deactivated {
-        cx: InactiveFwCtx<C>,
+        cx: InactiveFwCtx<C, MBF>,
         user_cx: Option<C>,
     },
 }

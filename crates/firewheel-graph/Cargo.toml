@@ -16,5 +16,6 @@ rtrb.workspace = true
 thiserror.workspace = true
 smallvec.workspace = true
 arrayvec.workspace = true
+atomic_float.workspace = true
 ahash = "0.8.11"
 thunderdome = "0.6.1"

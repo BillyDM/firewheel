@@ -1,18 +1,17 @@
 use std::error::Error;
 
-use crate::SilenceMask;
+use crate::{BlockFrames, SilenceMask};
 
-pub trait AudioNode<C>: 'static {
+pub trait AudioNode<C, const MBF: usize>: 'static {
     fn info(&self) -> AudioNodeInfo;
 
     /// Activate the audio node for processing.
     fn activate(
         &mut self,
         sample_rate: u32,
-        max_block_frames: usize,
         num_inputs: usize,
         num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn Error>>;
+    ) -> Result<Box<dyn AudioNodeProcessor<C, MBF>>, Box<dyn Error>>;
 
     /// Called when the processor counterpart has been deactivated
     /// and dropped.
@@ -20,10 +19,10 @@ pub trait AudioNode<C>: 'static {
     /// If the audio graph counterpart has gracefully shut down, then
     /// the processor counterpart is returned.
     #[allow(unused)]
-    fn deactivate(&mut self, processor: Option<Box<dyn AudioNodeProcessor<C>>>) {}
+    fn deactivate(&mut self, processor: Option<Box<dyn AudioNodeProcessor<C, MBF>>>) {}
 }
 
-pub trait AudioNodeProcessor<C>: 'static + Send {
+pub trait AudioNodeProcessor<C, const MBF: usize>: 'static + Send {
     /// Process the given block of audio. Only process data in the
     /// buffers up to `frames`.
     ///
@@ -34,10 +33,10 @@ pub trait AudioNodeProcessor<C>: 'static + Send {
     /// then mark that buffer as silent in [`ProcInfo::out_silence_mask`].
     fn process(
         &mut self,
-        frames: usize,
+        frames: BlockFrames<MBF>,
         proc_info: ProcInfo<C>,
-        inputs: &[&[f32]],
-        outputs: &mut [&mut [f32]],
+        inputs: &[&[f32; MBF]],
+        outputs: &mut [&mut [f32; MBF]],
     );
 }
 

@@ -3,7 +3,7 @@ use thunderdome::Arena;
 use crate::graph::{NodeID, ScheduleHeapData};
 use firewheel_core::{
     node::{AudioNodeProcessor, ProcInfo},
-    SilenceMask,
+    BlockFrames, SilenceMask,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,30 +13,27 @@ pub enum FwProcessorStatus {
     DropProcessor,
 }
 
-pub struct FwProcessor<C: 'static> {
-    nodes: Arena<Box<dyn AudioNodeProcessor<C>>>,
-    schedule_data: Option<Box<ScheduleHeapData<C>>>,
+pub struct FwProcessor<C: 'static, const MBF: usize> {
+    nodes: Arena<Box<dyn AudioNodeProcessor<C, MBF>>>,
+    schedule_data: Option<Box<ScheduleHeapData<C, MBF>>>,
     user_cx: Option<C>,
 
     // TODO: Do research on whether `rtrb` is compatible with
     // webassembly. If not, use conditional compilation to
     // use a different channel type when targeting webassembly.
-    from_graph_rx: rtrb::Consumer<ContextToProcessorMsg<C>>,
-    to_graph_tx: rtrb::Producer<ProcessorToContextMsg<C>>,
-
-    max_block_frames: usize,
+    from_graph_rx: rtrb::Consumer<ContextToProcessorMsg<C, MBF>>,
+    to_graph_tx: rtrb::Producer<ProcessorToContextMsg<C, MBF>>,
 
     running: bool,
 }
 
-impl<C> FwProcessor<C> {
+impl<C, const MBF: usize> FwProcessor<C, MBF> {
     pub(crate) fn new(
-        from_graph_rx: rtrb::Consumer<ContextToProcessorMsg<C>>,
-        to_graph_tx: rtrb::Producer<ProcessorToContextMsg<C>>,
+        from_graph_rx: rtrb::Consumer<ContextToProcessorMsg<C, MBF>>,
+        to_graph_tx: rtrb::Producer<ProcessorToContextMsg<C, MBF>>,
         node_capacity: usize,
         num_stream_in_channels: usize,
         num_stream_out_channels: usize,
-        max_block_frames: usize,
         user_cx: C,
     ) -> Self {
         assert!(num_stream_in_channels <= 64);
@@ -48,7 +45,6 @@ impl<C> FwProcessor<C> {
             user_cx: Some(user_cx),
             from_graph_rx,
             to_graph_tx,
-            max_block_frames,
             running: true,
         }
     }
@@ -90,7 +86,8 @@ impl<C> FwProcessor<C> {
 
         let mut frames_processed = 0;
         while frames_processed < frames {
-            let block_frames = (frames - frames_processed).min(self.max_block_frames);
+            let block_frames = BlockFrames::new(frames - frames_processed);
+            let frames = block_frames.get();
 
             // Prepare graph input buffers.
             self.schedule_data
@@ -98,13 +95,12 @@ impl<C> FwProcessor<C> {
                 .unwrap()
                 .schedule
                 .prepare_graph_inputs(
-                    block_frames,
                     num_in_channels,
-                    |channels: &mut [&mut [f32]]| -> SilenceMask {
+                    |channels: &mut [&mut [f32; MBF]]| -> SilenceMask {
                         firewheel_core::util::deinterleave(
-                            channels.iter_mut().map(|ch| &mut **ch),
+                            channels.iter_mut().map(|ch| &mut ch[..frames]),
                             &input[frames_processed * num_in_channels
-                                ..(frames_processed + block_frames) * num_in_channels],
+                                ..(frames_processed + frames) * num_in_channels],
                             num_in_channels,
                             true,
                         )
@@ -119,24 +115,23 @@ impl<C> FwProcessor<C> {
                 .unwrap()
                 .schedule
                 .read_graph_outputs(
-                    block_frames,
                     num_out_channels,
-                    |channels: &[&[f32]], silence_mask| {
+                    |channels: &[&[f32; MBF]], silence_mask| {
                         if channels.len() == 2 && num_out_channels == 2 {
                             // Use optimized stereo interleaving since it is the most
                             // common case.
                             firewheel_core::util::interleave_stereo(
-                                &channels[0],
-                                &channels[1],
+                                &channels[0][..frames],
+                                &channels[1][..frames],
                                 &mut output[frames_processed * num_out_channels
-                                    ..(frames_processed + block_frames) * num_out_channels],
+                                    ..(frames_processed + frames) * num_out_channels],
                                 Some(silence_mask),
                             );
                         } else {
                             firewheel_core::util::interleave(
-                                channels.iter().map(|ch| &**ch),
+                                channels.iter().map(|ch| &ch[..frames]),
                                 &mut output[frames_processed * num_out_channels
-                                    ..(frames_processed + block_frames) * num_out_channels],
+                                    ..(frames_processed + frames) * num_out_channels],
                                 num_out_channels,
                                 Some(silence_mask),
                             );
@@ -151,7 +146,7 @@ impl<C> FwProcessor<C> {
                 break;
             }
 
-            frames_processed += block_frames;
+            frames_processed += frames;
         }
 
         if self.running {
@@ -165,11 +160,6 @@ impl<C> FwProcessor<C> {
         while let Ok(msg) = self.from_graph_rx.pop() {
             match msg {
                 ContextToProcessorMsg::NewSchedule(mut new_schedule_data) => {
-                    assert_eq!(
-                        new_schedule_data.schedule.max_block_frames(),
-                        self.max_block_frames
-                    );
-
                     if let Some(mut old_schedule_data) = self.schedule_data.take() {
                         std::mem::swap(
                             &mut old_schedule_data.removed_node_processors,
@@ -202,7 +192,7 @@ impl<C> FwProcessor<C> {
         }
     }
 
-    fn process_block(&mut self, block_frames: usize) {
+    fn process_block(&mut self, block_frames: BlockFrames<MBF>) {
         self.poll_messages();
 
         if !self.running {
@@ -219,8 +209,8 @@ impl<C> FwProcessor<C> {
             block_frames,
             |node_id: NodeID,
              in_silence_mask: SilenceMask,
-             inputs: &[&[f32]],
-             outputs: &mut [&mut [f32]]|
+             inputs: &[&[f32; MBF]],
+             outputs: &mut [&mut [f32; MBF]]|
              -> SilenceMask {
                 let mut out_silence_mask = SilenceMask::NONE_SILENT;
 
@@ -238,7 +228,7 @@ impl<C> FwProcessor<C> {
     }
 }
 
-impl<C> Drop for FwProcessor<C> {
+impl<C, const MBF: usize> Drop for FwProcessor<C, MBF> {
     fn drop(&mut self) {
         // Make sure the nodes are not deallocated in the audio thread.
         let mut nodes = Arena::new();
@@ -252,16 +242,16 @@ impl<C> Drop for FwProcessor<C> {
     }
 }
 
-pub(crate) enum ContextToProcessorMsg<C> {
-    NewSchedule(Box<ScheduleHeapData<C>>),
+pub(crate) enum ContextToProcessorMsg<C, const MBF: usize> {
+    NewSchedule(Box<ScheduleHeapData<C, MBF>>),
     Stop,
 }
 
-pub(crate) enum ProcessorToContextMsg<C> {
-    ReturnSchedule(Box<ScheduleHeapData<C>>),
+pub(crate) enum ProcessorToContextMsg<C, const MBF: usize> {
+    ReturnSchedule(Box<ScheduleHeapData<C, MBF>>),
     Dropped {
-        nodes: Arena<Box<dyn AudioNodeProcessor<C>>>,
-        _schedule_data: Option<Box<ScheduleHeapData<C>>>,
+        nodes: Arena<Box<dyn AudioNodeProcessor<C, MBF>>>,
+        _schedule_data: Option<Box<ScheduleHeapData<C, MBF>>>,
         user_cx: Option<C>,
     },
 }

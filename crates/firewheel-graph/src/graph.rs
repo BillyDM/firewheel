@@ -16,8 +16,8 @@ pub use self::error::{AddEdgeError, CompileGraphError};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeID(pub(crate) thunderdome::Index);
 
-pub struct NodeWeight<C> {
-    pub node: Box<dyn AudioNode<C>>,
+pub struct NodeWeight<C, const MBF: usize> {
+    pub node: Box<dyn AudioNode<C, MBF>>,
     pub activated: bool,
 }
 
@@ -33,7 +33,6 @@ struct EdgeHash {
 pub struct AudioGraphConfig {
     pub num_graph_inputs: usize,
     pub num_graph_outputs: usize,
-    pub max_block_frames: usize,
     pub initial_node_capacity: usize,
     pub initial_edge_capacity: usize,
 }
@@ -43,15 +42,14 @@ impl Default for AudioGraphConfig {
         Self {
             num_graph_inputs: 0,
             num_graph_outputs: 2,
-            max_block_frames: 256,
             initial_node_capacity: 64,
             initial_edge_capacity: 256,
         }
     }
 }
 
-pub struct AudioGraph<C> {
-    nodes: Arena<NodeEntry<NodeWeight<C>>>,
+pub struct AudioGraph<C, const MBF: usize> {
+    nodes: Arena<NodeEntry<NodeWeight<C, MBF>>>,
     edges: Arena<Edge>,
     connected_input_ports: AHashSet<(NodeID, InPortIdx)>,
     existing_edges: AHashSet<EdgeHash>,
@@ -59,14 +57,13 @@ pub struct AudioGraph<C> {
     graph_in_id: NodeID,
     graph_out_id: NodeID,
     needs_compile: bool,
-    max_block_frames: usize,
 
     nodes_to_remove_from_schedule: Vec<NodeID>,
     nodes_to_activate: Vec<NodeID>,
-    active_nodes_to_remove: AHashMap<NodeID, NodeEntry<NodeWeight<C>>>,
+    active_nodes_to_remove: AHashMap<NodeID, NodeEntry<NodeWeight<C, MBF>>>,
 }
 
-impl<C: 'static> AudioGraph<C> {
+impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
     pub(crate) fn new(config: &AudioGraphConfig) -> Self {
         let mut nodes = Arena::with_capacity(config.initial_node_capacity);
 
@@ -95,15 +92,10 @@ impl<C: 'static> AudioGraph<C> {
             graph_in_id,
             graph_out_id,
             needs_compile: true,
-            max_block_frames: config.max_block_frames,
             nodes_to_remove_from_schedule: Vec::new(),
             nodes_to_activate: vec![graph_in_id, graph_out_id],
             active_nodes_to_remove: AHashMap::with_capacity(config.initial_edge_capacity),
         }
-    }
-
-    pub fn max_block_frames(&self) -> usize {
-        self.max_block_frames
     }
 
     pub(crate) fn current_node_capacity(&self) -> usize {
@@ -127,7 +119,7 @@ impl<C: 'static> AudioGraph<C> {
         &mut self,
         num_inputs: usize,
         num_outputs: usize,
-        node: impl AudioNode<C>,
+        node: impl AudioNode<C, MBF>,
     ) -> NodeID {
         self.needs_compile = true;
 
@@ -150,7 +142,7 @@ impl<C: 'static> AudioGraph<C> {
     ///
     /// This will return `None` if a node with the given ID does not
     /// exist in the graph.
-    pub fn node(&self, node_id: NodeID) -> Option<&Box<dyn AudioNode<C>>> {
+    pub fn node(&self, node_id: NodeID) -> Option<&Box<dyn AudioNode<C, MBF>>> {
         self.nodes.get(node_id.0).map(|n| &n.weight.node)
     }
 
@@ -158,7 +150,7 @@ impl<C: 'static> AudioGraph<C> {
     ///
     /// This will return `None` if a node with the given ID does not
     /// exist in the graph.
-    pub fn node_mut(&mut self, node_id: NodeID) -> Option<&mut Box<dyn AudioNode<C>>> {
+    pub fn node_mut(&mut self, node_id: NodeID) -> Option<&mut Box<dyn AudioNode<C, MBF>>> {
         self.nodes.get_mut(node_id.0).map(|n| &mut n.weight.node)
     }
 
@@ -166,7 +158,7 @@ impl<C: 'static> AudioGraph<C> {
     ///
     /// This will return `None` if a node with the given ID does not
     /// exist in the graph.
-    pub fn node_info(&self, node_id: NodeID) -> Option<&NodeEntry<NodeWeight<C>>> {
+    pub fn node_info(&self, node_id: NodeID) -> Option<&NodeEntry<NodeWeight<C, MBF>>> {
         self.nodes.get(node_id.0)
     }
 
@@ -215,7 +207,7 @@ impl<C: 'static> AudioGraph<C> {
     }
 
     /// Get a list of all the existing nodes in the graph.
-    pub fn nodes<'a>(&'a self) -> impl Iterator<Item = &'a NodeEntry<NodeWeight<C>>> {
+    pub fn nodes<'a>(&'a self) -> impl Iterator<Item = &'a NodeEntry<NodeWeight<C, MBF>>> {
         self.nodes.iter().map(|(_, n)| n)
     }
 
@@ -452,7 +444,7 @@ impl<C: 'static> AudioGraph<C> {
     }
 
     pub fn cycle_detected(&mut self) -> bool {
-        compiler::cycle_detected(
+        compiler::cycle_detected::<NodeWeight<C, MBF>, MBF>(
             &mut self.nodes,
             &mut self.edges,
             self.graph_in_id,
@@ -467,7 +459,7 @@ impl<C: 'static> AudioGraph<C> {
     pub(crate) fn compile(
         &mut self,
         sample_rate: u32,
-    ) -> Result<ScheduleHeapData<C>, CompileGraphError> {
+    ) -> Result<ScheduleHeapData<C, MBF>, CompileGraphError> {
         let schedule = self.compile_internal()?;
 
         let mut new_node_processors = Vec::with_capacity(self.nodes_to_activate.len());
@@ -475,7 +467,6 @@ impl<C: 'static> AudioGraph<C> {
             if let Some(node_entry) = self.nodes.get_mut(node_id.0) {
                 match node_entry.weight.node.activate(
                     sample_rate,
-                    self.max_block_frames,
                     node_entry.num_inputs as usize,
                     node_entry.num_outputs as usize,
                 ) {
@@ -504,17 +495,19 @@ impl<C: 'static> AudioGraph<C> {
         Ok(schedule_data)
     }
 
-    fn compile_internal(&mut self) -> Result<CompiledSchedule, CompileGraphError> {
+    fn compile_internal(&mut self) -> Result<CompiledSchedule<MBF>, CompileGraphError> {
         compiler::compile(
             &mut self.nodes,
             &mut self.edges,
             self.graph_in_id,
             self.graph_out_id,
-            self.max_block_frames,
         )
     }
 
-    pub(crate) fn on_schedule_returned(&mut self, mut schedule_data: Box<ScheduleHeapData<C>>) {
+    pub(crate) fn on_schedule_returned(
+        &mut self,
+        mut schedule_data: Box<ScheduleHeapData<C, MBF>>,
+    ) {
         for (node_id, processor) in schedule_data.removed_node_processors.drain(..) {
             if let Some(mut node_entry) = self.active_nodes_to_remove.remove(&node_id) {
                 node_entry.weight.node.deactivate(Some(processor));
@@ -532,7 +525,7 @@ impl<C: 'static> AudioGraph<C> {
 
     pub(crate) fn on_processor_dropped(
         &mut self,
-        mut nodes: Arena<Box<dyn AudioNodeProcessor<C>>>,
+        mut nodes: Arena<Box<dyn AudioNodeProcessor<C, MBF>>>,
     ) {
         for (node_id, processor) in nodes.drain() {
             if let Some(node_entry) = self.nodes.get_mut(node_id) {

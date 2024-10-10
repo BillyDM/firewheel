@@ -1,10 +1,13 @@
 use std::error::Error;
 
-use firewheel_core::node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo};
+use firewheel_core::{
+    node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo},
+    BlockFrames,
+};
 
 pub struct DummyAudioNode;
 
-impl<C> AudioNode<C> for DummyAudioNode {
+impl<C, const MBF: usize> AudioNode<C, MBF> for DummyAudioNode {
     fn info(&self) -> AudioNodeInfo {
         AudioNodeInfo {
             num_min_supported_inputs: 0,
@@ -17,23 +20,22 @@ impl<C> AudioNode<C> for DummyAudioNode {
     fn activate(
         &mut self,
         _sample_rate: u32,
-        _max_block_frames: usize,
         _num_inputs: usize,
         _num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn Error>> {
+    ) -> Result<Box<dyn AudioNodeProcessor<C, MBF>>, Box<dyn Error>> {
         Ok(Box::new(DummyAudioNodeProcessor))
     }
 }
 
 pub struct DummyAudioNodeProcessor;
 
-impl<C> AudioNodeProcessor<C> for DummyAudioNodeProcessor {
+impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for DummyAudioNodeProcessor {
     fn process(
         &mut self,
-        _frames: usize,
+        _frames: BlockFrames<MBF>,
         _proc_info: ProcInfo<C>,
-        _inputs: &[&[f32]],
-        _outputs: &mut [&mut [f32]],
+        _inputs: &[&[f32; MBF]],
+        _outputs: &mut [&mut [f32; MBF]],
     ) {
     }
 }

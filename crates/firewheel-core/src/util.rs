@@ -1,6 +1,6 @@
 //! General conversion functions and utilities.
 
-use crate::SilenceMask;
+use crate::{BlockFrames, SilenceMask};
 
 /// Returns the raw linear gain from the given decibel value.
 #[inline]
@@ -162,9 +162,15 @@ pub fn deinterleave_stereo(out_l: &mut [f32], out_r: &mut [f32], interleaved: &[
 }
 
 /// A convenience method to clear all output channels to `0.0` (silence)
-pub fn clear_all_outputs(outputs: &mut [&mut [f32]], out_silence_mask: &mut SilenceMask) {
+pub fn clear_all_outputs<const MBF: usize>(
+    frames: BlockFrames<MBF>,
+    outputs: &mut [&mut [f32; MBF]],
+    out_silence_mask: &mut SilenceMask,
+) {
+    let frames = frames.get();
+
     for out in outputs.iter_mut() {
-        out.fill(0.0);
+        out[..frames].fill(0.0);
     }
 
     *out_silence_mask = SilenceMask::new_all_silent(outputs.len());
