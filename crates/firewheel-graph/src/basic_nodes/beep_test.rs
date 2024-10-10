@@ -2,15 +2,15 @@ use firewheel_core::node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInf
 
 pub struct BeepTestNode {
     freq_hz: f32,
-    gain_amp: f32,
+    gain: f32,
 }
 
 impl BeepTestNode {
     pub fn new(freq_hz: f32, gain_db: f32) -> Self {
         let freq_hz = freq_hz.clamp(20.0, 20_000.0);
-        let gain_amp = firewheel_core::util::db_to_amp_clamped_neg_100_db(gain_db).clamp(0.0, 1.0);
+        let gain = firewheel_core::util::db_to_gain_clamped_neg_100_db(gain_db).clamp(0.0, 1.0);
 
-        Self { freq_hz, gain_amp }
+        Self { freq_hz, gain }
     }
 }
 
@@ -34,7 +34,7 @@ impl<C> AudioNode<C> for BeepTestNode {
         Ok(Box::new(BeepTestProcessor {
             phasor: 0.0,
             phasor_inc: self.freq_hz / sample_rate as f32,
-            gain_amp: self.gain_amp,
+            gain: self.gain,
         }))
     }
 }
@@ -42,7 +42,7 @@ impl<C> AudioNode<C> for BeepTestNode {
 struct BeepTestProcessor {
     phasor: f32,
     phasor_inc: f32,
-    gain_amp: f32,
+    gain: f32,
 }
 
 impl<C> AudioNodeProcessor<C> for BeepTestProcessor {
@@ -58,7 +58,7 @@ impl<C> AudioNodeProcessor<C> for BeepTestProcessor {
         };
 
         for s in out1.iter_mut() {
-            *s = (self.phasor * std::f32::consts::TAU).sin() * self.gain_amp;
+            *s = (self.phasor * std::f32::consts::TAU).sin() * self.gain;
             self.phasor = (self.phasor + self.phasor_inc).fract();
         }
 

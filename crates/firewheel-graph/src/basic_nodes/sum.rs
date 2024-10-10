@@ -60,10 +60,9 @@ impl<C> AudioNodeProcessor<C> for SumNodeProcessor {
         }
 
         match self.num_in_ports {
-            0 => unreachable!(),
             // Provide a few optimized loops for common number of input ports.
             2 => {
-                assert!(inputs.len() >= (num_outputs * 2));
+                assert!(num_inputs >= (num_outputs * 2));
 
                 for (ch_i, out) in outputs.iter_mut().enumerate() {
                     let in1 = &inputs[ch_i][0..out.len()];
@@ -75,7 +74,7 @@ impl<C> AudioNodeProcessor<C> for SumNodeProcessor {
                 }
             }
             3 => {
-                assert!(inputs.len() >= (num_outputs * 3));
+                assert!(num_inputs >= (num_outputs * 3));
 
                 for (ch_i, out) in outputs.iter_mut().enumerate() {
                     let in1 = &inputs[ch_i][0..out.len()];
@@ -88,7 +87,7 @@ impl<C> AudioNodeProcessor<C> for SumNodeProcessor {
                 }
             }
             4 => {
-                assert!(inputs.len() >= (num_outputs * 4));
+                assert!(num_inputs >= (num_outputs * 4));
 
                 for (ch_i, out) in outputs.iter_mut().enumerate() {
                     let in1 = &inputs[ch_i][0..out.len()];
@@ -102,7 +101,7 @@ impl<C> AudioNodeProcessor<C> for SumNodeProcessor {
                 }
             }
             n => {
-                assert!(inputs.len() >= (num_outputs * n));
+                assert!(num_inputs >= (num_outputs * n));
 
                 for (ch_i, out) in outputs.iter_mut().enumerate() {
                     out.copy_from_slice(inputs[ch_i]);

@@ -1,13 +1,13 @@
 use firewheel_core::node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo};
 
 pub struct HardClipNode {
-    threshold_amp: f32,
+    threshold_gain: f32,
 }
 
 impl HardClipNode {
     pub fn new(threshold_db: f32) -> Self {
         Self {
-            threshold_amp: firewheel_core::util::db_to_amp_clamped_neg_100_db(threshold_db),
+            threshold_gain: firewheel_core::util::db_to_gain_clamped_neg_100_db(threshold_db),
         }
     }
 }
@@ -34,13 +34,13 @@ impl<C> AudioNode<C> for HardClipNode {
         }
 
         Ok(Box::new(HardClipProcessor {
-            threshold_amp: self.threshold_amp,
+            threshold_gain: self.threshold_gain,
         }))
     }
 }
 
 struct HardClipProcessor {
-    threshold_amp: f32,
+    threshold_gain: f32,
 }
 
 impl<C> AudioNodeProcessor<C> for HardClipProcessor {
@@ -63,8 +63,8 @@ impl<C> AudioNodeProcessor<C> for HardClipProcessor {
             let out2 = &mut out2[0][0..in1.len()];
 
             for i in 0..in1.len() {
-                out1[i] = in1[i].min(self.threshold_amp).max(-self.threshold_amp);
-                out2[i] = in2[i].min(self.threshold_amp).max(-self.threshold_amp);
+                out1[i] = in1[i].min(self.threshold_gain).max(-self.threshold_gain);
+                out2[i] = in2[i].min(self.threshold_gain).max(-self.threshold_gain);
             }
 
             return;
@@ -77,7 +77,7 @@ impl<C> AudioNodeProcessor<C> for HardClipProcessor {
             }
 
             for (out_s, in_s) in output.iter_mut().zip(input.iter()) {
-                *out_s = in_s.min(self.threshold_amp).max(-self.threshold_amp);
+                *out_s = in_s.min(self.threshold_gain).max(-self.threshold_gain);
             }
         }
 
