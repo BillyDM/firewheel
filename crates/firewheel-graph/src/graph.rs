@@ -119,7 +119,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
         &mut self,
         num_inputs: usize,
         num_outputs: usize,
-        node: impl AudioNode<C, MBF>,
+        node: impl Into<Box<dyn AudioNode<C, MBF>>>,
     ) -> NodeID {
         self.needs_compile = true;
 
@@ -127,7 +127,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
             num_inputs,
             num_outputs,
             NodeWeight {
-                node: Box::new(node),
+                node: node.into(),
                 activated: false,
             },
         )));

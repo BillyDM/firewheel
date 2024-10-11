@@ -1,0 +1,23 @@
+[package]
+name = "visual_graph_demo"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+firewheel = { path = "../../" }
+log.workspace = true
+egui = "0.28"
+egui-snarl = "0.4.4"
+eframe = { version = "0.28", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "x11",
+    "wayland"
+] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+env_logger = "0.11.5"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"

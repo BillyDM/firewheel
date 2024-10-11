@@ -4,7 +4,7 @@ pub mod context;
 pub mod graph;
 pub mod processor;
 
-pub use context::{ActiveFwCtx, InactiveFwCtx};
+pub use context::{ActiveFwCtx, FwCtx, InactiveFwCtx};
 
 /// The default maximum number of frames that can appear in a
 /// processing block.

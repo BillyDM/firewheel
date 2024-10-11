@@ -123,3 +123,9 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for VolumeProcessor<MBF> {
         }
     }
 }
+
+impl<C, const MBF: usize> Into<Box<dyn AudioNode<C, MBF>>> for VolumeNode {
+    fn into(self) -> Box<dyn AudioNode<C, MBF>> {
+        Box::new(self)
+    }
+}

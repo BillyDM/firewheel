@@ -39,9 +39,9 @@ impl<N> NodeEntry<N> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InPortIdx(pub u32);
 
-impl From<u32> for InPortIdx {
-    fn from(value: u32) -> Self {
-        Self(value)
+impl From<usize> for InPortIdx {
+    fn from(value: usize) -> Self {
+        Self(value as u32)
     }
 }
 
@@ -49,9 +49,9 @@ impl From<u32> for InPortIdx {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OutPortIdx(pub u32);
 
-impl From<u32> for OutPortIdx {
-    fn from(value: u32) -> Self {
-        Self(value)
+impl From<usize> for OutPortIdx {
+    fn from(value: usize) -> Self {
+        Self(value as u32)
     }
 }
 

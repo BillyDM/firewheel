@@ -440,6 +440,17 @@ impl<C: 'static, const MBF: usize> Drop for ActiveFwCpalCtx<C, MBF> {
     }
 }
 
+pub enum FwCpalCtx<C: 'static, const MBF: usize> {
+    Inactive(InactiveFwCpalCtx<C, MBF>),
+    Active(ActiveFwCpalCtx<C, MBF>),
+}
+
+impl<C: Send + 'static, const MBF: usize> FwCpalCtx<C, MBF> {
+    pub fn new(graph_config: AudioGraphConfig) -> Self {
+        Self::Inactive(InactiveFwCpalCtx::new(graph_config))
+    }
+}
+
 pub enum UpdateStatus<C: 'static, const MBF: usize> {
     Ok {
         cx: ActiveFwCpalCtx<C, MBF>,

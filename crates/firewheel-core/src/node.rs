@@ -73,8 +73,9 @@ pub struct ProcInfo<'a, C> {
     /// By default no channels are flagged as silent.
     pub out_silence_mask: &'a mut SilenceMask,
 
-    /// The number of seconds that have elapsed since the stream was
-    /// started
+    /// The number of seconds that have elapsed from when the stream was
+    /// started to the fist sample in this process cycle. This uses the
+    /// clock from the OS's audio API so it should be very accurate.
     pub stream_time_secs: f64,
 
     /// Flags indicating the current status of the audio stream

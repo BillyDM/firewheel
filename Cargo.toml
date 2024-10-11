@@ -22,6 +22,7 @@ members = [
     "crates/firewheel-graph",
     "crates/firewheel-cpal",
     "examples/beep_test",
+    "examples/visual_graph_demo",
 ]
 
 [features]
@@ -41,3 +42,7 @@ smallvec = "1.13.2"
 arrayvec = "0.7.6"
 atomic_float = "1.1.0"
 bitflags = "2.6.0"
+
+# Optimize all dependencies even in debug builds:
+[profile.dev.package."*"]
+opt-level = 2
