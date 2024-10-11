@@ -75,9 +75,9 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for VolumeProcessor<MBF> {
     fn process(
         &mut self,
         frames: BlockFrames<MBF>,
-        proc_info: ProcInfo<C>,
         inputs: &[&[f32; MBF]],
         outputs: &mut [&mut [f32; MBF]],
+        proc_info: ProcInfo<C>,
     ) {
         let raw_gain = self.raw_gain.load(Ordering::Relaxed);
 

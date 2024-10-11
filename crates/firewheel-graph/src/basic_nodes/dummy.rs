@@ -33,9 +33,9 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for DummyAudioNodeProcessor
     fn process(
         &mut self,
         _frames: BlockFrames<MBF>,
-        _proc_info: ProcInfo<C>,
         _inputs: &[&[f32; MBF]],
         _outputs: &mut [&mut [f32; MBF]],
+        _proc_info: ProcInfo<C>,
     ) {
     }
 }

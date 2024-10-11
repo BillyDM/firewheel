@@ -2,7 +2,7 @@ use thunderdome::Arena;
 
 use crate::graph::{NodeID, ScheduleHeapData};
 use firewheel_core::{
-    node::{AudioNodeProcessor, ProcInfo},
+    node::{AudioNodeProcessor, ProcInfo, StreamStatus},
     BlockFrames, SilenceMask,
 };
 
@@ -60,6 +60,8 @@ impl<C, const MBF: usize> FwProcessor<C, MBF> {
         num_in_channels: usize,
         num_out_channels: usize,
         frames: usize,
+        stream_time_secs: f64,
+        stream_status: StreamStatus,
     ) -> FwProcessorStatus {
         if !self.running {
             output.fill(0.0);
@@ -107,7 +109,7 @@ impl<C, const MBF: usize> FwProcessor<C, MBF> {
                     },
                 );
 
-            self.process_block(block_frames);
+            self.process_block(block_frames, stream_time_secs, stream_status);
 
             // Copy the output of the graph to the output buffer.
             self.schedule_data
@@ -192,7 +194,12 @@ impl<C, const MBF: usize> FwProcessor<C, MBF> {
         }
     }
 
-    fn process_block(&mut self, block_frames: BlockFrames<MBF>) {
+    fn process_block(
+        &mut self,
+        block_frames: BlockFrames<MBF>,
+        stream_time_secs: f64,
+        stream_status: StreamStatus,
+    ) {
         self.poll_messages();
 
         if !self.running {
@@ -217,10 +224,12 @@ impl<C, const MBF: usize> FwProcessor<C, MBF> {
                 let proc_info = ProcInfo {
                     in_silence_mask,
                     out_silence_mask: &mut out_silence_mask,
+                    stream_time_secs,
+                    stream_status,
                     cx: user_cx,
                 };
 
-                self.nodes[node_id.0].process(block_frames, proc_info, inputs, outputs);
+                self.nodes[node_id.0].process(block_frames, inputs, outputs, proc_info);
 
                 out_silence_mask
             },

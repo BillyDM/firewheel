@@ -34,9 +34,9 @@ pub trait AudioNodeProcessor<C, const MBF: usize>: 'static + Send {
     fn process(
         &mut self,
         frames: BlockFrames<MBF>,
-        proc_info: ProcInfo<C>,
         inputs: &[&[f32; MBF]],
         outputs: &mut [&mut [f32; MBF]],
+        proc_info: ProcInfo<C>,
     );
 }
 
@@ -61,18 +61,39 @@ pub struct AudioNodeInfo {
 /// Additional information for processing audio
 pub struct ProcInfo<'a, C> {
     /// An optional optimization hint on which input channels contain
-    /// all zeros (silence). The first bit (`0x1`) is the first channel,
+    /// all zeros (silence). The first bit (`0b1`) is the first channel,
     /// the second bit is the second channel, and so on.
     pub in_silence_mask: SilenceMask,
 
     /// An optional optimization hint to notify the host which output
-    /// channels contain all zeros (silence). The first bit (`0x1`) is
+    /// channels contain all zeros (silence). The first bit (`0b1`) is
     /// the first channel, the second bit is the second channel, and so
     /// on.
     ///
     /// By default no channels are flagged as silent.
     pub out_silence_mask: &'a mut SilenceMask,
 
-    /// A global user-defined context.
+    /// The number of seconds that have elapsed since the stream was
+    /// started
+    pub stream_time_secs: f64,
+
+    /// Flags indicating the current status of the audio stream
+    pub stream_status: StreamStatus,
+
+    /// A global user-defined context
     pub cx: &'a mut C,
+}
+
+bitflags::bitflags! {
+    /// Flags indicating the current status of the audio stream
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct StreamStatus: u32 {
+        /// Some input data was discarded because of an overflow condition
+        /// at the audio driver.
+        const INPUT_OVERFLOW = 0b01;
+
+        /// The output buffer ran low, likely producing a break in the
+        /// output sound.
+        const OUTPUT_UNDERFLOW = 0b10;
+    }
 }

@@ -11,3 +11,4 @@ categories.workspace = true
 
 [dependencies]
 arrayvec.workspace = true
+bitflags.workspace = true

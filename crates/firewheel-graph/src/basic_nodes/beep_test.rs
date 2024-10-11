@@ -1,19 +1,37 @@
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
 use firewheel_core::{
     node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo},
     BlockFrames,
 };
 
 pub struct BeepTestNode {
+    enabled: Arc<AtomicBool>,
     freq_hz: f32,
     gain: f32,
 }
 
 impl BeepTestNode {
-    pub fn new(freq_hz: f32, gain_db: f32) -> Self {
+    pub fn new(freq_hz: f32, gain_db: f32, enabled: bool) -> Self {
         let freq_hz = freq_hz.clamp(20.0, 20_000.0);
         let gain = firewheel_core::util::db_to_gain_clamped_neg_100_db(gain_db).clamp(0.0, 1.0);
 
-        Self { freq_hz, gain }
+        Self {
+            freq_hz,
+            gain,
+            enabled: Arc::new(AtomicBool::new(enabled)),
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::Relaxed);
     }
 }
 
@@ -34,6 +52,7 @@ impl<C, const MBF: usize> AudioNode<C, MBF> for BeepTestNode {
         _num_outputs: usize,
     ) -> Result<Box<dyn AudioNodeProcessor<C, MBF>>, Box<dyn std::error::Error>> {
         Ok(Box::new(BeepTestProcessor {
+            enabled: Arc::clone(&self.enabled),
             phasor: 0.0,
             phasor_inc: self.freq_hz / sample_rate as f32,
             gain: self.gain,
@@ -42,6 +61,7 @@ impl<C, const MBF: usize> AudioNode<C, MBF> for BeepTestNode {
 }
 
 struct BeepTestProcessor {
+    enabled: Arc<AtomicBool>,
     phasor: f32,
     phasor_inc: f32,
     gain: f32,
@@ -51,13 +71,18 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for BeepTestProcessor {
     fn process(
         &mut self,
         frames: BlockFrames<MBF>,
-        _proc_info: ProcInfo<C>,
         _inputs: &[&[f32; MBF]],
         outputs: &mut [&mut [f32; MBF]],
+        proc_info: ProcInfo<C>,
     ) {
         let Some((out1, outputs)) = outputs.split_first_mut() else {
             return;
         };
+
+        if !self.enabled.load(Ordering::Relaxed) {
+            firewheel_core::util::clear_all_outputs(frames, outputs, proc_info.out_silence_mask);
+            return;
+        }
 
         let frames = frames.get();
 

@@ -49,9 +49,9 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for HardClipProcessor {
     fn process(
         &mut self,
         frames: BlockFrames<MBF>,
-        proc_info: ProcInfo<C>,
         inputs: &[&[f32; MBF]],
         outputs: &mut [&mut [f32; MBF]],
+        proc_info: ProcInfo<C>,
     ) {
         let frames = frames.get();
 

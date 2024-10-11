@@ -1,6 +1,7 @@
 use std::{fmt::Debug, time::Duration};
 
 use cpal::traits::{DeviceTrait, HostTrait};
+use firewheel_core::node::StreamStatus;
 use firewheel_graph::{
     backend::DeviceInfo,
     graph::{AudioGraph, AudioGraphConfig, CompileGraphError},
@@ -170,24 +171,22 @@ impl<C: 'static + Send, const MBF: usize> InactiveFwCpalCtx<C, MBF> {
             &config
         );
 
-        let (mut to_stream_tx, mut from_ctx_rx) =
+        let (mut to_stream_tx, from_ctx_rx) =
             rtrb::RingBuffer::<CtxToStreamMsg<C, MBF>>::new(MSG_CHANNEL_CAPACITY);
         let (mut err_to_cx_tx, from_err_rx) =
             rtrb::RingBuffer::<cpal::StreamError>::new(MSG_CHANNEL_CAPACITY);
 
-        let mut processor: Option<FwProcessor<C, MBF>> = None;
+        let mut data_callback = DataCallback::new(
+            num_in_channels,
+            num_out_channels,
+            from_ctx_rx,
+            config.sample_rate.0,
+        );
 
         let stream = match device.build_output_stream(
             &config,
-            move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
-                data_callback(
-                    data,
-                    num_in_channels,
-                    num_out_channels,
-                    info,
-                    &mut from_ctx_rx,
-                    &mut processor,
-                )
+            move |output: &mut [f32], info: &cpal::OutputCallbackInfo| {
+                data_callback.callback(output, info);
             },
             move |err| {
                 let _ = err_to_cx_tx.push(err);
@@ -237,36 +236,107 @@ impl<C, const MBF: usize> Debug for InactiveFwCpalCtx<C, MBF> {
     }
 }
 
-fn data_callback<C, const MBF: usize>(
-    output: &mut [f32],
+struct DataCallback<C: 'static, const MBF: usize> {
     num_in_channels: usize,
     num_out_channels: usize,
-    // TODO: use provided timestamp in some way
-    _info: &cpal::OutputCallbackInfo,
-    from_ctx_rx: &mut rtrb::Consumer<CtxToStreamMsg<C, MBF>>,
-    processor: &mut Option<FwProcessor<C, MBF>>,
-) {
-    while let Ok(msg) = from_ctx_rx.pop() {
-        let CtxToStreamMsg::NewProcessor(p) = msg;
-        *processor = Some(p);
-    }
+    from_ctx_rx: rtrb::Consumer<CtxToStreamMsg<C, MBF>>,
+    processor: Option<FwProcessor<C, MBF>>,
+    sample_rate_recip: f64,
+    first_stream_instant: Option<cpal::StreamInstant>,
+    predicted_stream_secs: f64,
+    is_first_callback: bool,
+}
 
-    let mut drop_processor = false;
-    if let Some(processor) = processor {
-        let frames = output.len() / num_out_channels;
-
-        match processor.process_interleaved(&[], output, num_in_channels, num_out_channels, frames)
-        {
-            FwProcessorStatus::Ok => {}
-            FwProcessorStatus::DropProcessor => drop_processor = true,
+impl<C: 'static, const MBF: usize> DataCallback<C, MBF> {
+    fn new(
+        num_in_channels: usize,
+        num_out_channels: usize,
+        from_ctx_rx: rtrb::Consumer<CtxToStreamMsg<C, MBF>>,
+        sample_rate: u32,
+    ) -> Self {
+        Self {
+            num_in_channels,
+            num_out_channels,
+            from_ctx_rx,
+            processor: None,
+            sample_rate_recip: f64::from(sample_rate).recip(),
+            first_stream_instant: None,
+            predicted_stream_secs: 1.0,
+            is_first_callback: true,
         }
-    } else {
-        output.fill(0.0);
-        return;
     }
 
-    if drop_processor {
-        *processor = None;
+    fn callback(&mut self, output: &mut [f32], info: &cpal::OutputCallbackInfo) {
+        while let Ok(msg) = self.from_ctx_rx.pop() {
+            let CtxToStreamMsg::NewProcessor(p) = msg;
+            self.processor = Some(p);
+        }
+
+        let frames = output.len() / self.num_out_channels;
+
+        let (stream_time_secs, underflow) = if self.is_first_callback {
+            // Apparently there is a bug in CPAL where the callback instant in
+            // the first callback can be greater than in the second callback.
+            //
+            // Work around this by ignoring the first callback instant.
+            self.is_first_callback = false;
+            self.predicted_stream_secs = frames as f64 * self.sample_rate_recip;
+            (0.0, false)
+        } else if let Some(instant) = &self.first_stream_instant {
+            let stream_time_secs = info
+                .timestamp()
+                .callback
+                .duration_since(instant)
+                .unwrap()
+                .as_secs_f64();
+
+            // If the stream time is significantly greater than the predicted stream
+            // time, it means an underflow has occurred.
+            let underrun = stream_time_secs > self.predicted_stream_secs;
+
+            // Calculate the next predicted stream time to detect underflows.
+            //
+            // Add a little bit of wiggle room to account for tiny clock
+            // innacuracies and rounding errors.
+            self.predicted_stream_secs =
+                stream_time_secs + (frames as f64 * self.sample_rate_recip * 1.2);
+
+            (stream_time_secs, underrun)
+        } else {
+            self.first_stream_instant = Some(info.timestamp().callback);
+            let stream_time_secs = self.predicted_stream_secs;
+            self.predicted_stream_secs += frames as f64 * self.sample_rate_recip * 1.2;
+            (stream_time_secs, false)
+        };
+
+        let mut drop_processor = false;
+        if let Some(processor) = &mut self.processor {
+            let mut stream_status = StreamStatus::empty();
+
+            if underflow {
+                stream_status.insert(StreamStatus::OUTPUT_UNDERFLOW);
+            }
+
+            match processor.process_interleaved(
+                &[],
+                output,
+                self.num_in_channels,
+                self.num_out_channels,
+                frames,
+                stream_time_secs,
+                stream_status,
+            ) {
+                FwProcessorStatus::Ok => {}
+                FwProcessorStatus::DropProcessor => drop_processor = true,
+            }
+        } else {
+            output.fill(0.0);
+            return;
+        }
+
+        if drop_processor {
+            self.processor = None;
+        }
     }
 }
 

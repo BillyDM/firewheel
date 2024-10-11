@@ -31,9 +31,9 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for MonoToStereoProcessor {
     fn process(
         &mut self,
         frames: BlockFrames<MBF>,
-        proc_info: ProcInfo<C>,
         inputs: &[&[f32; MBF]],
         outputs: &mut [&mut [f32; MBF]],
+        proc_info: ProcInfo<C>,
     ) {
         if proc_info.in_silence_mask.is_channel_silent(0) {
             firewheel_core::util::clear_all_outputs(frames, outputs, proc_info.out_silence_mask);
