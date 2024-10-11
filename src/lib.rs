@@ -10,5 +10,3 @@ pub type InactiveCtx = InactiveFwCpalCtx<(), DEFAULT_MAX_BLOCK_FRAMES>;
 pub type ActiveCtx = ActiveFwCpalCtx<(), DEFAULT_MAX_BLOCK_FRAMES>;
 #[cfg(feature = "cpal")]
 pub type Context = FwCpalCtx<(), DEFAULT_MAX_BLOCK_FRAMES>;
-
-pub type AudioNode = dyn node::AudioNode<(), DEFAULT_MAX_BLOCK_FRAMES>;
