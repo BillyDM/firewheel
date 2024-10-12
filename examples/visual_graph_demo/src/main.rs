@@ -4,6 +4,11 @@ mod ui;
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
+    #[cfg(debug_assertions)]
+    simple_log::quick!("debug");
+    #[cfg(not(debug_assertions))]
+    simple_log::quick!("info");
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([400.0, 300.0])

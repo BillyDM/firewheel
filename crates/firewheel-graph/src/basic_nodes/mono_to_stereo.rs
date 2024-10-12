@@ -6,6 +6,10 @@ use firewheel_core::{
 pub struct MonoToStereoNode;
 
 impl<C, const MBF: usize> AudioNode<C, MBF> for MonoToStereoNode {
+    fn debug_name(&self) -> &'static str {
+        "mono_to_stereo"
+    }
+
     fn info(&self) -> AudioNodeInfo {
         AudioNodeInfo {
             num_min_supported_inputs: 1,

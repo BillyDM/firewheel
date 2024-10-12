@@ -16,6 +16,10 @@ impl HardClipNode {
 }
 
 impl<C, const MBF: usize> AudioNode<C, MBF> for HardClipNode {
+    fn debug_name(&self) -> &'static str {
+        "hard_clip"
+    }
+
     fn info(&self) -> AudioNodeInfo {
         AudioNodeInfo {
             num_min_supported_inputs: 1,

@@ -40,6 +40,10 @@ impl VolumeNode {
 }
 
 impl<C, const MBF: usize> AudioNode<C, MBF> for VolumeNode {
+    fn debug_name(&self) -> &'static str {
+        "volume"
+    }
+
     fn info(&self) -> AudioNodeInfo {
         AudioNodeInfo {
             num_min_supported_inputs: 1,

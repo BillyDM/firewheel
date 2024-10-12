@@ -36,6 +36,10 @@ impl BeepTestNode {
 }
 
 impl<C, const MBF: usize> AudioNode<C, MBF> for BeepTestNode {
+    fn debug_name(&self) -> &'static str {
+        "beep_test"
+    }
+
     fn info(&self) -> AudioNodeInfo {
         AudioNodeInfo {
             num_min_supported_inputs: 0,

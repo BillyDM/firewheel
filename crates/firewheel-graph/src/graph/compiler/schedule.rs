@@ -1,6 +1,6 @@
 use arrayvec::ArrayVec;
 use smallvec::SmallVec;
-use std::cell::UnsafeCell;
+use std::{cell::UnsafeCell, fmt::Debug};
 
 use firewheel_core::{node::AudioNodeProcessor, BlockFrames, SilenceMask};
 
@@ -8,7 +8,7 @@ use super::NodeID;
 
 /// A [ScheduledNode] is a [Node] that has been assigned buffers
 /// and a place in the schedule.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(super) struct ScheduledNode {
     /// The node ID
     pub id: NodeID,
@@ -29,6 +29,36 @@ impl ScheduledNode {
     }
 }
 
+impl Debug for ScheduledNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{ {:?}", &self.id)?;
+
+        if !self.input_buffers.is_empty() {
+            write!(f, " | in:")?;
+
+            for in_buf in self.input_buffers.iter() {
+                write!(f, " {}-{}", in_buf.buffer_index, in_buf.generation,)?;
+
+                if in_buf.should_clear {
+                    write!(f, "(clr)")?;
+                }
+
+                write!(f, ",")?;
+            }
+        }
+
+        if !self.output_buffers.is_empty() {
+            write!(f, " | out:")?;
+
+            for out_buf in self.output_buffers.iter() {
+                write!(f, " {}-{},", out_buf.buffer_index, out_buf.generation)?;
+            }
+        }
+
+        write!(f, " }}")
+    }
+}
+
 /// Represents a single buffer assigned to an input port
 #[derive(Copy, Clone, Debug)]
 pub(super) struct InBufferAssignment {
@@ -40,7 +70,7 @@ pub(super) struct InBufferAssignment {
     /// Buffers are reused, the "generation" represents
     /// how many times this buffer has been used before
     /// this assignment. Kept for debugging and visualization.
-    pub _generation: usize,
+    pub generation: usize,
 }
 
 /// Represents a single buffer assigned to an output port
@@ -51,7 +81,7 @@ pub(super) struct OutBufferAssignment {
     /// Buffers are reused, the "generation" represents
     /// how many times this buffer has been used before
     /// this assignment. Kept for debugging and visualization.
-    pub _generation: usize,
+    pub generation: usize,
 }
 
 pub struct ScheduleHeapData<C, const MBF: usize> {
@@ -78,8 +108,20 @@ impl<C, const MBF: usize> ScheduleHeapData<C, MBF> {
     }
 }
 
+impl<C, const MBF: usize> Debug for ScheduleHeapData<C, MBF> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let new_node_processors: Vec<NodeID> =
+            self.new_node_processors.iter().map(|(id, _)| *id).collect();
+
+        f.debug_struct("ScheduleHeapData")
+            .field("schedule", &self.schedule)
+            .field("nodes_to_remove", &self.nodes_to_remove)
+            .field("new_node_processors", &new_node_processors)
+            .finish()
+    }
+}
+
 /// A [CompiledSchedule] is the output of the graph compiler.
-#[derive(Debug)]
 pub struct CompiledSchedule<const MBF: usize> {
     schedule: Vec<ScheduledNode>,
 
@@ -88,6 +130,27 @@ pub struct CompiledSchedule<const MBF: usize> {
 
     buffers: Vec<UnsafeCell<[f32; MBF]>>,
     buffer_silence_flags: Vec<bool>,
+}
+
+impl<const MBF: usize> Debug for CompiledSchedule<MBF> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "CompiledSchedule {{")?;
+
+        writeln!(f, "    schedule: {{")?;
+
+        for n in self.schedule.iter() {
+            writeln!(f, "        {:?}", n)?;
+        }
+
+        writeln!(f, "    }}")?;
+
+        writeln!(f, "    graph_in_idx: {}", self.graph_in_idx)?;
+        writeln!(f, "    graph_out_idx: {}", self.graph_out_idx)?;
+
+        writeln!(f, "    num_buffers: {}", self.buffers.len())?;
+
+        writeln!(f, "}}")
+    }
 }
 
 impl<const MBF: usize> CompiledSchedule<MBF> {

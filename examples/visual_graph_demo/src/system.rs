@@ -8,7 +8,7 @@ use firewheel::{
     UpdateStatus, DEFAULT_MAX_BLOCK_FRAMES,
 };
 
-use crate::ui::DynAudioNode;
+use crate::ui::DynGuiAudioNode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeType {
@@ -39,24 +39,18 @@ impl AudioSystem {
         }
     }
 
-    pub fn add_node(&mut self, node_type: NodeType) -> DynAudioNode {
-        let (node, name, num_inputs, num_outputs): (
+    pub fn add_node(&mut self, node_type: NodeType) -> DynGuiAudioNode {
+        let (node, num_inputs, num_outputs): (
             Box<dyn AudioNode<(), DEFAULT_MAX_BLOCK_FRAMES>>,
-            String,
             usize,
             usize,
         ) = match node_type {
-            NodeType::BeepTest => (
-                Box::new(BeepTestNode::new(440.0, -12.0, true)),
-                "Beep Test".into(),
-                0,
-                1,
-            ),
-            NodeType::HardClip => (Box::new(HardClipNode::new(0.0)), "Hard Clip".into(), 2, 2),
-            NodeType::MonoToStereo => (Box::new(MonoToStereoNode), "Mono To Stereo".into(), 1, 2),
-            NodeType::StereoToMono => (Box::new(StereoToMonoNode), "Stereo To Mono".into(), 2, 1),
-            NodeType::Sum => (Box::new(SumNode), "Sum".into(), 8, 2),
-            NodeType::Volume => (Box::new(VolumeNode::new(100.0)), "Volume".into(), 2, 2),
+            NodeType::BeepTest => (Box::new(BeepTestNode::new(440.0, -12.0, true)), 0, 1),
+            NodeType::HardClip => (Box::new(HardClipNode::new(0.0)), 2, 2),
+            NodeType::MonoToStereo => (Box::new(MonoToStereoNode), 1, 2),
+            NodeType::StereoToMono => (Box::new(StereoToMonoNode), 2, 1),
+            NodeType::Sum => (Box::new(SumNode), 8, 2),
+            NodeType::Volume => (Box::new(VolumeNode::new(100.0)), 2, 2),
         };
 
         let id = self
@@ -66,11 +60,11 @@ impl AudioSystem {
             .graph_mut()
             .add_node(num_inputs, num_outputs, node);
 
-        DynAudioNode {
+        DynGuiAudioNode {
             id,
-            name,
             num_inputs,
             num_outputs,
+            node_type,
         }
     }
 

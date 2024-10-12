@@ -25,7 +25,10 @@ pub struct NodeEntry<N> {
 impl<N> NodeEntry<N> {
     pub fn new(num_inputs: usize, num_outputs: usize, weight: N) -> Self {
         Self {
-            id: NodeID(thunderdome::Index::DANGLING),
+            id: NodeID {
+                idx: thunderdome::Index::DANGLING,
+                debug_name: "",
+            },
             num_inputs: num_inputs as u32,
             num_outputs: num_outputs as u32,
             weight,
@@ -189,8 +192,8 @@ impl<'a, N, const MBF: usize> GraphIR<'a, N, MBF> {
         graph_in_id: NodeID,
         graph_out_id: NodeID,
     ) -> Self {
-        assert!(nodes.contains(graph_in_id.0));
-        assert!(nodes.contains(graph_out_id.0));
+        assert!(nodes.contains(graph_in_id.idx));
+        assert!(nodes.contains(graph_out_id.idx));
 
         for (_, node) in nodes.iter_mut() {
             assert!(node.num_inputs <= 64);
@@ -201,8 +204,8 @@ impl<'a, N, const MBF: usize> GraphIR<'a, N, MBF> {
         }
 
         for (_, edge) in edges.iter() {
-            nodes[edge.src_node.0].outgoing.push(*edge);
-            nodes[edge.dst_node.0].incoming.push(*edge);
+            nodes[edge.src_node.idx].outgoing.push(*edge);
+            nodes[edge.dst_node.idx].incoming.push(*edge);
 
             debug_assert_ne!(edge.src_node, graph_out_id);
             debug_assert_ne!(edge.dst_node, graph_in_id);
@@ -237,14 +240,14 @@ impl<'a, N, const MBF: usize> GraphIR<'a, N, MBF> {
         // Calculate in-degree of each vertex
         for (_, node_entry) in self.nodes.iter() {
             for edge in node_entry.outgoing.iter() {
-                in_degree[edge.dst_node.0.slot() as usize] += 1;
+                in_degree[edge.dst_node.idx.slot() as usize] += 1;
             }
         }
 
         // Enqueue vertices with 0 in-degree
-        for (node_id, node_entry) in self.nodes.iter() {
+        for (_, node_entry) in self.nodes.iter() {
             if node_entry.incoming.is_empty() {
-                queue.push_back(node_id);
+                queue.push_back(node_entry.id);
             }
         }
 
@@ -252,26 +255,26 @@ impl<'a, N, const MBF: usize> GraphIR<'a, N, MBF> {
         while let Some(node_id) = queue.pop_front() {
             num_visited += 1;
 
-            let node_entry = &self.nodes[node_id];
+            let node_entry = &self.nodes[node_id.idx];
 
             // Reduce in-degree of adjacent vertices
             for edge in node_entry.outgoing.iter() {
-                in_degree[edge.dst_node.0.slot() as usize] -= 1;
+                in_degree[edge.dst_node.idx.slot() as usize] -= 1;
 
                 // If in-degree becomes 0, enqueue it
-                if in_degree[edge.dst_node.0.slot() as usize] == 0 {
-                    queue.push_back(edge.dst_node.0);
+                if in_degree[edge.dst_node.idx.slot() as usize] == 0 {
+                    queue.push_back(edge.dst_node);
                 }
             }
 
             if build_schedule {
-                if node_id == self.graph_in_id.0 {
+                if node_id == self.graph_in_id {
                     self.graph_in_idx = self.schedule.len();
-                } else if node_id == self.graph_out_id.0 {
+                } else if node_id == self.graph_out_id {
                     self.graph_out_idx = self.schedule.len();
                 }
 
-                self.schedule.push(ScheduledNode::new(NodeID(node_id)));
+                self.schedule.push(ScheduledNode::new(node_id));
             }
         }
 
@@ -292,7 +295,7 @@ impl<'a, N, const MBF: usize> GraphIR<'a, N, MBF> {
         for entry in &mut self.schedule {
             // Collect the inputs to the algorithm, the incoming/outgoing edges of this node.
 
-            let node_entry = &self.nodes[entry.id.0];
+            let node_entry = &self.nodes[entry.id.idx];
 
             buffers_to_release.clear();
             if buffers_to_release.capacity()
@@ -327,7 +330,7 @@ impl<'a, N, const MBF: usize> GraphIR<'a, N, MBF> {
                     let buffer = allocator.acquire();
                     entry.input_buffers.push(InBufferAssignment {
                         buffer_index: buffer.idx,
-                        _generation: buffer.generation,
+                        generation: buffer.generation,
                         should_clear: true,
                     });
                     buffers_to_release.push(buffer);
@@ -340,7 +343,7 @@ impl<'a, N, const MBF: usize> GraphIR<'a, N, MBF> {
                         .expect("No buffer assigned to edge!");
                     entry.input_buffers.push(InBufferAssignment {
                         buffer_index: buffer.idx,
-                        _generation: buffer.generation,
+                        generation: buffer.generation,
                         should_clear: false,
                     });
                     buffers_to_release.push(buffer);
@@ -365,7 +368,7 @@ impl<'a, N, const MBF: usize> GraphIR<'a, N, MBF> {
                     let buffer = allocator.acquire();
                     entry.output_buffers.push(OutBufferAssignment {
                         buffer_index: buffer.idx,
-                        _generation: buffer.generation,
+                        generation: buffer.generation,
                     });
                     buffers_to_release.push(buffer);
                 } else {
@@ -378,7 +381,7 @@ impl<'a, N, const MBF: usize> GraphIR<'a, N, MBF> {
                     }
                     entry.output_buffers.push(OutBufferAssignment {
                         buffer_index: buffer.idx,
-                        _generation: buffer.generation,
+                        generation: buffer.generation,
                     });
                 }
             }

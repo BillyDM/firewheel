@@ -3,6 +3,8 @@ use std::error::Error;
 use crate::{BlockFrames, SilenceMask};
 
 pub trait AudioNode<C, const MBF: usize>: 'static {
+    fn debug_name(&self) -> &'static str;
+
     fn info(&self) -> AudioNodeInfo;
 
     /// Activate the audio node for processing.

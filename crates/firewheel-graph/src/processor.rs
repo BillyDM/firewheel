@@ -169,7 +169,7 @@ impl<C, const MBF: usize> FwProcessor<C, MBF> {
                         );
 
                         for node_id in new_schedule_data.nodes_to_remove.iter() {
-                            if let Some(processor) = self.nodes.remove(node_id.0) {
+                            if let Some(processor) = self.nodes.remove(node_id.idx) {
                                 old_schedule_data
                                     .removed_node_processors
                                     .push((*node_id, processor));
@@ -182,7 +182,7 @@ impl<C, const MBF: usize> FwProcessor<C, MBF> {
                     }
 
                     for (node_id, processor) in new_schedule_data.new_node_processors.drain(..) {
-                        assert!(self.nodes.insert_at(node_id.0, processor).is_none());
+                        assert!(self.nodes.insert_at(node_id.idx, processor).is_none());
                     }
 
                     self.schedule_data = Some(new_schedule_data);
@@ -229,7 +229,7 @@ impl<C, const MBF: usize> FwProcessor<C, MBF> {
                     cx: user_cx,
                 };
 
-                self.nodes[node_id.0].process(block_frames, inputs, outputs, proc_info);
+                self.nodes[node_id.idx].process(block_frames, inputs, outputs, proc_info);
 
                 out_silence_mask
             },

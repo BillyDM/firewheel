@@ -1,6 +1,9 @@
 mod compiler;
 mod error;
 
+use std::fmt::Debug;
+use std::hash::Hash;
+
 use ahash::{AHashMap, AHashSet};
 use thunderdome::Arena;
 
@@ -13,8 +16,49 @@ pub use self::compiler::{Edge, EdgeID, InPortIdx, NodeEntry, OutPortIdx};
 pub use self::error::{AddEdgeError, CompileGraphError};
 
 /// A globally unique identifier for a node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeID(pub(crate) thunderdome::Index);
+#[derive(Clone, Copy)]
+pub struct NodeID {
+    pub idx: thunderdome::Index,
+    pub debug_name: &'static str,
+}
+
+impl PartialEq for NodeID {
+    fn eq(&self, other: &Self) -> bool {
+        self.idx == other.idx
+    }
+}
+
+impl Eq for NodeID {}
+
+impl Ord for NodeID {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.idx.cmp(&other.idx)
+    }
+}
+
+impl PartialOrd for NodeID {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Hash for NodeID {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.idx.hash(state);
+    }
+}
+
+impl Debug for NodeID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}-{}-{}",
+            self.debug_name,
+            self.idx.slot(),
+            self.idx.generation()
+        )
+    }
+}
 
 pub struct NodeWeight<C, const MBF: usize> {
     pub node: Box<dyn AudioNode<C, MBF>>,
@@ -67,22 +111,31 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
     pub(crate) fn new(config: &AudioGraphConfig) -> Self {
         let mut nodes = Arena::with_capacity(config.initial_node_capacity);
 
-        let graph_in_id = NodeID(nodes.insert(NodeEntry::new(
-            0,
-            config.num_graph_inputs,
-            NodeWeight {
-                node: Box::new(DummyAudioNode),
-                activated: false,
-            },
-        )));
-        let graph_out_id = NodeID(nodes.insert(NodeEntry::new(
-            config.num_graph_outputs,
-            0,
-            NodeWeight {
-                node: Box::new(DummyAudioNode),
-                activated: false,
-            },
-        )));
+        let graph_in_id = NodeID {
+            idx: nodes.insert(NodeEntry::new(
+                0,
+                config.num_graph_inputs,
+                NodeWeight {
+                    node: Box::new(DummyAudioNode),
+                    activated: false,
+                },
+            )),
+            debug_name: "graph_in",
+        };
+        nodes[graph_in_id.idx].id = graph_in_id;
+
+        let graph_out_id = NodeID {
+            idx: nodes.insert(NodeEntry::new(
+                config.num_graph_outputs,
+                0,
+                NodeWeight {
+                    node: Box::new(DummyAudioNode),
+                    activated: false,
+                },
+            )),
+            debug_name: "graph_out",
+        };
+        nodes[graph_out_id.idx].id = graph_out_id;
 
         Self {
             nodes,
@@ -121,19 +174,25 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
         num_outputs: usize,
         node: impl Into<Box<dyn AudioNode<C, MBF>>>,
     ) -> NodeID {
-        self.needs_compile = true;
+        let node: Box<dyn AudioNode<C, MBF>> = node.into();
+        let debug_name = node.debug_name();
 
-        let new_id = NodeID(self.nodes.insert(NodeEntry::new(
-            num_inputs,
-            num_outputs,
-            NodeWeight {
-                node: node.into(),
-                activated: false,
-            },
-        )));
-        self.nodes[new_id.0].id = new_id;
+        let new_id = NodeID {
+            idx: self.nodes.insert(NodeEntry::new(
+                num_inputs,
+                num_outputs,
+                NodeWeight {
+                    node: node.into(),
+                    activated: false,
+                },
+            )),
+            debug_name,
+        };
+        self.nodes[new_id.idx].id = new_id;
 
         self.nodes_to_activate.push(new_id);
+
+        self.needs_compile = true;
 
         new_id
     }
@@ -143,7 +202,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
     /// This will return `None` if a node with the given ID does not
     /// exist in the graph.
     pub fn node(&self, node_id: NodeID) -> Option<&Box<dyn AudioNode<C, MBF>>> {
-        self.nodes.get(node_id.0).map(|n| &n.weight.node)
+        self.nodes.get(node_id.idx).map(|n| &n.weight.node)
     }
 
     /// Get a mutable reference to the node.
@@ -151,7 +210,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
     /// This will return `None` if a node with the given ID does not
     /// exist in the graph.
     pub fn node_mut(&mut self, node_id: NodeID) -> Option<&mut Box<dyn AudioNode<C, MBF>>> {
-        self.nodes.get_mut(node_id.0).map(|n| &mut n.weight.node)
+        self.nodes.get_mut(node_id.idx).map(|n| &mut n.weight.node)
     }
 
     /// Get info about a node.
@@ -159,7 +218,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
     /// This will return `None` if a node with the given ID does not
     /// exist in the graph.
     pub fn node_info(&self, node_id: NodeID) -> Option<&NodeEntry<NodeWeight<C, MBF>>> {
-        self.nodes.get(node_id.0)
+        self.nodes.get(node_id.idx)
     }
 
     /// Remove the given node from the graph.
@@ -178,7 +237,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
             return Err(());
         }
 
-        let node_entry = self.nodes.remove(node_id.0).ok_or(())?;
+        let node_entry = self.nodes.remove(node_id.idx).ok_or(())?;
 
         let mut removed_edges: Vec<EdgeID> = Vec::new();
 
@@ -231,7 +290,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
 
         let num_inputs = num_inputs as u32;
 
-        let node_entry = self.nodes.get_mut(node_id.0).ok_or(())?;
+        let node_entry = self.nodes.get_mut(node_id.idx).ok_or(())?;
 
         let old_num_inputs = node_entry.num_inputs;
         let mut removed_edges = Vec::new();
@@ -244,7 +303,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
             }
         }
 
-        self.nodes[node_id.0].num_inputs = num_inputs;
+        self.nodes[node_id.idx].num_inputs = num_inputs;
 
         self.needs_compile = true;
         Ok(removed_edges)
@@ -263,7 +322,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
             return Err(());
         }
 
-        let node_entry = self.nodes.get_mut(node_id.0).ok_or(())?;
+        let node_entry = self.nodes.get_mut(node_id.idx).ok_or(())?;
 
         let num_outputs = num_outputs as u32;
 
@@ -276,7 +335,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
             }
         }
 
-        self.nodes[node_id.0].num_outputs = num_outputs;
+        self.nodes[node_id.idx].num_outputs = num_outputs;
 
         self.needs_compile = true;
         Ok(removed_edges)
@@ -312,11 +371,11 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
 
         let src_node_entry = self
             .nodes
-            .get(src_node.0)
+            .get(src_node.idx)
             .ok_or(AddEdgeError::SrcNodeNotFound(src_node))?;
         let dst_node_entry = self
             .nodes
-            .get(dst_node.0)
+            .get(dst_node.idx)
             .ok_or(AddEdgeError::DstNodeNotFound(dst_node))?;
 
         if src_port.0 >= src_node_entry.num_outputs {
@@ -334,7 +393,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
             });
         }
 
-        if src_node.0 == dst_node.0 {
+        if src_node.idx == dst_node.idx {
             return Err(AddEdgeError::CycleDetected);
         }
 
@@ -464,7 +523,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
 
         let mut new_node_processors = Vec::with_capacity(self.nodes_to_activate.len());
         for node_id in self.nodes_to_activate.iter() {
-            if let Some(node_entry) = self.nodes.get_mut(node_id.0) {
+            if let Some(node_entry) = self.nodes.get_mut(node_id.idx) {
                 match node_entry.weight.node.activate(
                     sample_rate,
                     node_entry.num_inputs as usize,
@@ -473,7 +532,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
                     Ok(processor) => new_node_processors.push((*node_id, processor)),
                     Err(e) => {
                         for (n_id, processor) in new_node_processors.drain(..) {
-                            self.nodes[n_id.0].weight.node.deactivate(Some(processor));
+                            self.nodes[n_id.idx].weight.node.deactivate(Some(processor));
                         }
 
                         return Err(CompileGraphError::NodeActivationFailed(*node_id, e));
@@ -491,6 +550,8 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
         self.needs_compile = false;
         self.nodes_to_activate.clear();
         self.nodes_to_remove_from_schedule.clear();
+
+        log::debug!("compiled new audio graph: {:?}", &schedule_data);
 
         Ok(schedule_data)
     }
@@ -512,7 +573,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
             if let Some(mut node_entry) = self.active_nodes_to_remove.remove(&node_id) {
                 node_entry.weight.node.deactivate(Some(processor));
                 node_entry.weight.activated = false;
-            } else if let Some(node_entry) = self.nodes.get_mut(node_id.0) {
+            } else if let Some(node_entry) = self.nodes.get_mut(node_id.idx) {
                 if node_entry.weight.activated {
                     node_entry.weight.node.deactivate(Some(processor));
                     node_entry.weight.activated = false;
@@ -548,7 +609,12 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
                 node_entry.weight.activated = false;
             }
 
-            self.nodes_to_activate.push(NodeID(node_id));
+            let debug_name = node_entry.weight.node.debug_name();
+
+            self.nodes_to_activate.push(NodeID {
+                idx: node_id,
+                debug_name,
+            });
         }
     }
 }

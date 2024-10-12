@@ -6,6 +6,10 @@ use firewheel_core::{
 pub struct SumNode;
 
 impl<C, const MBF: usize> AudioNode<C, MBF> for SumNode {
+    fn debug_name(&self) -> &'static str {
+        "sum"
+    }
+
     fn info(&self) -> AudioNodeInfo {
         AudioNodeInfo {
             num_min_supported_inputs: 1,

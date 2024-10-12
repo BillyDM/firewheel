@@ -8,6 +8,10 @@ use firewheel_core::{
 pub struct DummyAudioNode;
 
 impl<C, const MBF: usize> AudioNode<C, MBF> for DummyAudioNode {
+    fn debug_name(&self) -> &'static str {
+        "dummy"
+    }
+
     fn info(&self) -> AudioNodeInfo {
         AudioNodeInfo {
             num_min_supported_inputs: 0,
