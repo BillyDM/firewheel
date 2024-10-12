@@ -2,7 +2,7 @@ use eframe::{App, CreationContext};
 use egui::{Color32, Id, Ui};
 use egui_snarl::{
     ui::{AnyPins, PinInfo, SnarlStyle, SnarlViewer},
-    InPin, OutPin, Snarl,
+    InPin, InPinId, OutPin, OutPinId, Snarl,
 };
 
 use crate::system::{AudioSystem, NodeType};
@@ -27,9 +27,48 @@ struct DemoViewer<'a> {
     audio_system: &'a mut AudioSystem,
 }
 
+impl<'a> DemoViewer<'a> {
+    fn remove_edge(&mut self, from: OutPinId, to: InPinId, snarl: &mut Snarl<GuiAudioNode>) {
+        let Some(src_node) = snarl.get_node(from.node) else {
+            return;
+        };
+        let Some(dst_node) = snarl.get_node(to.node) else {
+            return;
+        };
+
+        let src_node = match src_node {
+            GuiAudioNode::SystemIn => self.audio_system.graph_in_node(),
+            GuiAudioNode::SystemOut => self.audio_system.graph_out_node(),
+            GuiAudioNode::Dynamic(n) => n.id,
+        };
+        let dst_node = match dst_node {
+            GuiAudioNode::SystemIn => self.audio_system.graph_in_node(),
+            GuiAudioNode::SystemOut => self.audio_system.graph_out_node(),
+            GuiAudioNode::Dynamic(n) => n.id,
+        };
+
+        self.audio_system
+            .disconnect(src_node, dst_node, from.output, to.input);
+
+        snarl.disconnect(from, to);
+    }
+}
+
 impl<'a> SnarlViewer<GuiAudioNode> for DemoViewer<'a> {
+    fn drop_inputs(&mut self, pin: &InPin, snarl: &mut Snarl<GuiAudioNode>) {
+        for from in pin.remotes.iter() {
+            self.remove_edge(*from, pin.id, snarl);
+        }
+    }
+
+    fn drop_outputs(&mut self, pin: &OutPin, snarl: &mut Snarl<GuiAudioNode>) {
+        for to in pin.remotes.iter() {
+            self.remove_edge(pin.id, *to, snarl);
+        }
+    }
+
     fn disconnect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<GuiAudioNode>) {
-        // TODO
+        self.remove_edge(from.id, to.id, snarl);
     }
 
     fn connect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<GuiAudioNode>) {

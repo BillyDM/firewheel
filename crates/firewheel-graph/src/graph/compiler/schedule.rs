@@ -358,7 +358,7 @@ mod tests {
         let node0 = graph.graph_in_node();
         let node1 = graph.graph_out_node();
 
-        let edge0 = graph.add_edge(node0, 0, node1, 0, false).unwrap();
+        let edge0 = graph.connect(node0, 0, node1, 0, false).unwrap();
 
         let schedule = graph.compile_internal().unwrap();
 
@@ -407,17 +407,17 @@ mod tests {
         let node5 = graph.add_node(5, 2, DummyAudioNode);
         let node6 = graph.graph_out_node();
 
-        let edge0 = graph.add_edge(node0, 0, node1, 0, false).unwrap();
-        let edge1 = graph.add_edge(node0, 1, node2, 0, false).unwrap();
-        let edge2 = graph.add_edge(node1, 0, node3, 0, false).unwrap();
-        let edge3 = graph.add_edge(node1, 1, node4, 1, false).unwrap();
-        let edge4 = graph.add_edge(node3, 0, node5, 0, false).unwrap();
-        let edge5 = graph.add_edge(node3, 1, node5, 1, false).unwrap();
-        let edge6 = graph.add_edge(node4, 0, node5, 2, false).unwrap();
-        let edge7 = graph.add_edge(node4, 1, node5, 3, false).unwrap();
-        let edge8 = graph.add_edge(node2, 0, node5, 4, false).unwrap();
-        let edge9 = graph.add_edge(node5, 0, node6, 0, false).unwrap();
-        let edge10 = graph.add_edge(node5, 1, node6, 1, false).unwrap();
+        let edge0 = graph.connect(node0, 0, node1, 0, false).unwrap();
+        let edge1 = graph.connect(node0, 1, node2, 0, false).unwrap();
+        let edge2 = graph.connect(node1, 0, node3, 0, false).unwrap();
+        let edge3 = graph.connect(node1, 1, node4, 1, false).unwrap();
+        let edge4 = graph.connect(node3, 0, node5, 0, false).unwrap();
+        let edge5 = graph.connect(node3, 1, node5, 1, false).unwrap();
+        let edge6 = graph.connect(node4, 0, node5, 2, false).unwrap();
+        let edge7 = graph.connect(node4, 1, node5, 3, false).unwrap();
+        let edge8 = graph.connect(node2, 0, node5, 4, false).unwrap();
+        let edge9 = graph.connect(node5, 0, node6, 0, false).unwrap();
+        let edge10 = graph.connect(node5, 1, node6, 1, false).unwrap();
 
         let schedule = graph.compile_internal().unwrap();
 
@@ -495,13 +495,13 @@ mod tests {
         let node5 = graph.graph_out_node();
         let node6 = graph.add_node(1, 1, DummyAudioNode);
 
-        let edge0 = graph.add_edge(node0, 0, node2, 0, false).unwrap();
-        let edge1 = graph.add_edge(node0, 0, node3, 1, false).unwrap();
-        let edge2 = graph.add_edge(node2, 0, node4, 0, false).unwrap();
-        let edge3 = graph.add_edge(node3, 1, node4, 3, false).unwrap();
-        let edge4 = graph.add_edge(node1, 0, node4, 4, false).unwrap();
-        let edge5 = graph.add_edge(node4, 0, node5, 0, false).unwrap();
-        let edge6 = graph.add_edge(node4, 2, node6, 0, false).unwrap();
+        let edge0 = graph.connect(node0, 0, node2, 0, false).unwrap();
+        let edge1 = graph.connect(node0, 0, node3, 1, false).unwrap();
+        let edge2 = graph.connect(node2, 0, node4, 0, false).unwrap();
+        let edge3 = graph.connect(node3, 1, node4, 3, false).unwrap();
+        let edge4 = graph.connect(node1, 0, node4, 4, false).unwrap();
+        let edge5 = graph.connect(node4, 0, node5, 0, false).unwrap();
+        let edge6 = graph.connect(node4, 2, node6, 0, false).unwrap();
 
         let schedule = graph.compile_internal().unwrap();
 
@@ -613,10 +613,10 @@ mod tests {
         let node1 = graph.graph_in_node();
         let node2 = graph.graph_out_node();
 
-        graph.add_edge(node1, 0, node2, 0, false).unwrap();
+        graph.connect(node1, 0, node2, 0, false).unwrap();
 
         if let Err(AddEdgeError::InputPortAlreadyConnected(node_id, port_id)) =
-            graph.add_edge(node1, OutPortIdx(1), node2, InPortIdx(0), false)
+            graph.connect(node1, OutPortIdx(1), node2, InPortIdx(0), false)
         {
             assert_eq!(node_id, node2);
             assert_eq!(port_id, InPortIdx(0));
@@ -637,17 +637,17 @@ mod tests {
         let node2 = graph.add_node(2, 1, DummyAudioNode);
         let node3 = graph.add_node(1, 1, DummyAudioNode);
 
-        graph.add_edge(node1, 0, node2, 0, false).unwrap();
-        graph.add_edge(node2, 0, node3, 0, false).unwrap();
-        let edge3 = graph.add_edge(node3, 0, node1, 0, false).unwrap();
+        graph.connect(node1, 0, node2, 0, false).unwrap();
+        graph.connect(node2, 0, node3, 0, false).unwrap();
+        let edge3 = graph.connect(node3, 0, node1, 0, false).unwrap();
 
         assert!(graph.cycle_detected());
 
-        graph.remove_edge(edge3);
+        graph.disconnect_by_edge_id(edge3);
 
         assert!(!graph.cycle_detected());
 
-        graph.add_edge(node3, 0, node2, 1, false).unwrap();
+        graph.connect(node3, 0, node2, 1, false).unwrap();
 
         assert!(graph.cycle_detected());
     }

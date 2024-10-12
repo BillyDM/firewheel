@@ -96,7 +96,7 @@ pub struct AudioGraph<C, const MBF: usize> {
     nodes: Arena<NodeEntry<NodeWeight<C, MBF>>>,
     edges: Arena<Edge>,
     connected_input_ports: AHashSet<(NodeID, InPortIdx)>,
-    existing_edges: AHashSet<EdgeHash>,
+    existing_edges: AHashMap<EdgeHash, EdgeID>,
 
     graph_in_id: NodeID,
     graph_out_id: NodeID,
@@ -141,7 +141,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
             nodes,
             edges: Arena::with_capacity(config.initial_edge_capacity),
             connected_input_ports: AHashSet::with_capacity(config.initial_edge_capacity),
-            existing_edges: AHashSet::with_capacity(config.initial_edge_capacity),
+            existing_edges: AHashMap::with_capacity(config.initial_edge_capacity),
             graph_in_id,
             graph_out_id,
             needs_compile: true,
@@ -341,7 +341,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
         Ok(removed_edges)
     }
 
-    /// Add an [Edge] (port connection) to the graph.
+    /// Add a connection (edge) to the graph.
     ///
     /// * `src_node_id` - The ID of the source node.
     /// * `src_port_idx` - The index of the source port. This must be an output
@@ -351,14 +351,16 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
     /// input port on the destination node.
     /// * `check_for_cycles` - If `true`, then this will run a check to
     /// see if adding this edge will create a cycle in the graph, and
-    /// return an error if it does.
+    /// return an error if it does. Note, checking for cycles can be quite
+    /// expensive, so avoid enabling this when calling this method many times
+    /// in a row.
     ///
     /// If successful, this returns the globally unique identifier assigned
     /// to this edge.
     ///
     /// If this returns an error, then the audio graph has not been
     /// modified.
-    pub fn add_edge(
+    pub fn connect(
         &mut self,
         src_node: NodeID,
         src_port: impl Into<OutPortIdx>,
@@ -397,7 +399,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
             return Err(AddEdgeError::CycleDetected);
         }
 
-        if !self.existing_edges.insert(EdgeHash {
+        if self.existing_edges.contains_key(&EdgeHash {
             src_node,
             src_port,
             dst_node,
@@ -418,6 +420,15 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
             dst_port,
         }));
         self.edges[new_edge_id.0].id = new_edge_id;
+        self.existing_edges.insert(
+            EdgeHash {
+                src_node,
+                src_port,
+                dst_node,
+                dst_port,
+            },
+            new_edge_id,
+        );
 
         if check_for_cycles {
             if self.cycle_detected() {
@@ -432,11 +443,35 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
         Ok(new_edge_id)
     }
 
-    /// Remove the given [Edge] (port connection) from the graph.
+    /// Remove a connection (edge) from the graph.
     ///
     /// If the edge did not exist in the graph, then `false` will be
     /// returned.
-    pub fn remove_edge(&mut self, edge_id: EdgeID) -> bool {
+    pub fn disconnect(
+        &mut self,
+        src_node: NodeID,
+        src_port: impl Into<OutPortIdx>,
+        dst_node: NodeID,
+        dst_port: impl Into<InPortIdx>,
+    ) -> bool {
+        if let Some(edge_id) = self.existing_edges.remove(&EdgeHash {
+            src_node,
+            src_port: src_port.into(),
+            dst_node,
+            dst_port: dst_port.into(),
+        }) {
+            self.disconnect_by_edge_id(edge_id);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Remove a connection (edge) from the graph by the [EdgeID].
+    ///
+    /// If the edge did not exist in the graph, then `false` will be
+    /// returned.
+    pub fn disconnect_by_edge_id(&mut self, edge_id: EdgeID) -> bool {
         if let Some(edge) = self.edges.remove(edge_id.0) {
             self.existing_edges.remove(&EdgeHash {
                 src_node: edge.src_node,
@@ -475,7 +510,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
         }
 
         for edge_id in edges_to_remove.iter() {
-            self.remove_edge(*edge_id);
+            self.disconnect_by_edge_id(*edge_id);
         }
 
         edges_to_remove
@@ -496,7 +531,7 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
         }
 
         for edge_id in edges_to_remove.iter() {
-            self.remove_edge(*edge_id);
+            self.disconnect_by_edge_id(*edge_id);
         }
 
         edges_to_remove

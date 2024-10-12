@@ -21,10 +21,10 @@ fn main() {
         BeepTestNode::new(BEEP_FREQUENCY_HZ, BEEP_GAIN_DB, true),
     );
     graph
-        .add_edge(beep_test_node, 0, graph.graph_out_node(), 0, false)
+        .connect(beep_test_node, 0, graph.graph_out_node(), 0, false)
         .unwrap();
     graph
-        .add_edge(beep_test_node, 1, graph.graph_out_node(), 1, false)
+        .connect(beep_test_node, 1, graph.graph_out_node(), 1, false)
         .unwrap();
 
     let mut active_cx = Some(cx.activate(None, true, ()).unwrap());

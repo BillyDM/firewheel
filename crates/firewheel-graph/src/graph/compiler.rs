@@ -260,7 +260,7 @@ impl<'a, N, const MBF: usize> GraphIR<'a, N, MBF> {
 
             let (_, node_entry) = self.nodes.get_by_slot(node_slot).unwrap();
 
-            // Reduce in-degree of adjacent vertices
+            // Reduce in-degree of adjacent nodes
             for edge in node_entry.outgoing.iter() {
                 in_degree[edge.dst_node.idx.slot() as usize] -= 1;
 

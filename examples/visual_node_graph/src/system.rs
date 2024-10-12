@@ -79,9 +79,23 @@ impl AudioSystem {
             .as_mut()
             .unwrap()
             .graph_mut()
-            .add_edge(src_node, src_port, dst_node, dst_port, true)?;
+            .connect(src_node, src_port, dst_node, dst_port, true)?;
 
         Ok(())
+    }
+
+    pub fn disconnect(
+        &mut self,
+        src_node: NodeID,
+        dst_node: NodeID,
+        src_port: usize,
+        dst_port: usize,
+    ) {
+        self.cx
+            .as_mut()
+            .unwrap()
+            .graph_mut()
+            .disconnect(src_node, src_port, dst_node, dst_port);
     }
 
     pub fn graph_in_node(&self) -> NodeID {
