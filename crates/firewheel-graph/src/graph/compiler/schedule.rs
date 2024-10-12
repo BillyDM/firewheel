@@ -36,22 +36,44 @@ impl Debug for ScheduledNode {
         if !self.input_buffers.is_empty() {
             write!(f, " | in:")?;
 
+            let mut first = true;
             for in_buf in self.input_buffers.iter() {
-                write!(f, " {}-{}", in_buf.buffer_index, in_buf.generation,)?;
-
-                if in_buf.should_clear {
-                    write!(f, "(clr)")?;
+                if first {
+                    first = false;
+                } else {
+                    write!(f, ",")?;
                 }
 
-                write!(f, ",")?;
+                write!(
+                    f,
+                    " (buf: {}, gen: {}",
+                    in_buf.buffer_index, in_buf.generation,
+                )?;
+
+                if in_buf.should_clear {
+                    write!(f, ", clear")?;
+                }
+
+                write!(f, ")")?;
             }
         }
 
         if !self.output_buffers.is_empty() {
             write!(f, " | out:")?;
 
+            let mut first = true;
             for out_buf in self.output_buffers.iter() {
-                write!(f, " {}-{},", out_buf.buffer_index, out_buf.generation)?;
+                if first {
+                    first = false;
+                } else {
+                    write!(f, ",")?;
+                }
+
+                write!(
+                    f,
+                    " (buf: {}, gen: {})",
+                    out_buf.buffer_index, out_buf.generation
+                )?;
             }
         }
 
