@@ -147,9 +147,6 @@ impl<C, const MBF: usize> Debug for ScheduleHeapData<C, MBF> {
 pub struct CompiledSchedule<const MBF: usize> {
     schedule: Vec<ScheduledNode>,
 
-    graph_in_idx: usize,
-    graph_out_idx: usize,
-
     buffers: Vec<UnsafeCell<[f32; MBF]>>,
     buffer_silence_flags: Vec<bool>,
 }
@@ -166,9 +163,6 @@ impl<const MBF: usize> Debug for CompiledSchedule<MBF> {
 
         writeln!(f, "    }}")?;
 
-        writeln!(f, "    graph_in_idx: {}", self.graph_in_idx)?;
-        writeln!(f, "    graph_out_idx: {}", self.graph_out_idx)?;
-
         writeln!(f, "    num_buffers: {}", self.buffers.len())?;
 
         writeln!(f, "}}")
@@ -176,16 +170,9 @@ impl<const MBF: usize> Debug for CompiledSchedule<MBF> {
 }
 
 impl<const MBF: usize> CompiledSchedule<MBF> {
-    pub(super) fn new(
-        schedule: Vec<ScheduledNode>,
-        graph_in_idx: usize,
-        graph_out_idx: usize,
-        num_buffers: usize,
-    ) -> Self {
+    pub(super) fn new(schedule: Vec<ScheduledNode>, num_buffers: usize) -> Self {
         Self {
             schedule,
-            graph_in_idx,
-            graph_out_idx,
             buffers: (0..num_buffers)
                 .map(|_| UnsafeCell::new([0.0; MBF]))
                 .collect(),
@@ -198,7 +185,7 @@ impl<const MBF: usize> CompiledSchedule<MBF> {
         num_stream_inputs: usize,
         fill_inputs: impl FnOnce(&mut [&mut [f32; MBF]]) -> SilenceMask,
     ) {
-        let graph_in_node = &self.schedule[self.graph_in_idx];
+        let graph_in_node = self.schedule.first().unwrap();
 
         let mut inputs: ArrayVec<&mut [f32; MBF], 64> = ArrayVec::new();
 
@@ -234,7 +221,7 @@ impl<const MBF: usize> CompiledSchedule<MBF> {
         num_stream_outputs: usize,
         read_outputs: impl FnOnce(&[&[f32; MBF]], SilenceMask),
     ) {
-        let graph_out_node = &self.schedule[self.graph_out_idx];
+        let graph_out_node = self.schedule.last().unwrap();
 
         let mut outputs: ArrayVec<&[f32; MBF], 64> = ArrayVec::new();
 

@@ -177,8 +177,6 @@ struct GraphIR<'a, N, const MBF: usize> {
 
     graph_in_id: NodeID,
     graph_out_id: NodeID,
-    graph_in_idx: usize,
-    graph_out_idx: usize,
     max_in_buffers: usize,
     max_out_buffers: usize,
 }
@@ -218,8 +216,6 @@ impl<'a, N, const MBF: usize> GraphIR<'a, N, MBF> {
             max_num_buffers: 0,
             graph_in_id,
             graph_out_id,
-            graph_in_idx: 0,
-            graph_out_idx: 0,
             max_in_buffers: 0,
             max_out_buffers: 0,
         }
@@ -244,18 +240,25 @@ impl<'a, N, const MBF: usize> GraphIR<'a, N, MBF> {
             }
         }
 
-        // Enqueue vertices with 0 in-degree
+        // Make sure that the graph in node is the first entry in the
+        // schedule. Otherwise a different root node could overwrite
+        // the buffers assigned to the graph in node.
+        queue.push_back(self.graph_in_id.idx.slot());
+
+        // Enqueue all other nodes with 0 in-degree
         for (_, node_entry) in self.nodes.iter() {
-            if node_entry.incoming.is_empty() {
-                queue.push_back(node_entry.id);
+            if node_entry.incoming.is_empty()
+                && node_entry.id.idx.slot() != self.graph_in_id.idx.slot()
+            {
+                queue.push_back(node_entry.id.idx.slot());
             }
         }
 
         // BFS traversal
-        while let Some(node_id) = queue.pop_front() {
+        while let Some(node_slot) = queue.pop_front() {
             num_visited += 1;
 
-            let node_entry = &self.nodes[node_id.idx];
+            let (_, node_entry) = self.nodes.get_by_slot(node_slot).unwrap();
 
             // Reduce in-degree of adjacent vertices
             for edge in node_entry.outgoing.iter() {
@@ -263,19 +266,23 @@ impl<'a, N, const MBF: usize> GraphIR<'a, N, MBF> {
 
                 // If in-degree becomes 0, enqueue it
                 if in_degree[edge.dst_node.idx.slot() as usize] == 0 {
-                    queue.push_back(edge.dst_node);
+                    queue.push_back(edge.dst_node.idx.slot());
                 }
             }
 
             if build_schedule {
-                if node_id == self.graph_in_id {
-                    self.graph_in_idx = self.schedule.len();
-                } else if node_id == self.graph_out_id {
-                    self.graph_out_idx = self.schedule.len();
+                if node_slot != self.graph_out_id.idx.slot() {
+                    self.schedule.push(ScheduledNode::new(node_entry.id));
                 }
-
-                self.schedule.push(ScheduledNode::new(node_id));
             }
+        }
+
+        if build_schedule {
+            // Make sure that the graph out node is the last entry in the
+            // schedule by waiting to push it after all other nodes have
+            // been pushed. Otherwise a different leaf node could overwrite
+            // the buffers assigned to the graph out node.
+            self.schedule.push(ScheduledNode::new(self.graph_out_id));
         }
 
         // If not all vertices are visited, cycle
@@ -400,11 +407,6 @@ impl<'a, N, const MBF: usize> GraphIR<'a, N, MBF> {
 
     /// Merge the GraphIR into a [CompiledSchedule].
     fn merge(self) -> CompiledSchedule<MBF> {
-        CompiledSchedule::new(
-            self.schedule,
-            self.graph_in_idx,
-            self.graph_out_idx,
-            self.max_num_buffers,
-        )
+        CompiledSchedule::new(self.schedule, self.max_num_buffers)
     }
 }

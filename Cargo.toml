@@ -22,7 +22,7 @@ members = [
     "crates/firewheel-graph",
     "crates/firewheel-cpal",
     "examples/beep_test",
-    "examples/visual_graph_demo",
+    "examples/visual_node_graph",
 ]
 
 [features]

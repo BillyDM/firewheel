@@ -19,7 +19,7 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "firewheel demo",
+        "firewheel visual node graph demo",
         native_options,
         Box::new(|cx| Ok(Box::new(ui::DemoApp::new(cx)))),
     )
@@ -33,7 +33,7 @@ fn main() {
     wasm_bindgen_futures::spawn_local(async {
         eframe::WebRunner::new()
             .start(
-                "firewheel_demo",
+                "firewheel_visual_node_graph_demo",
                 web_options,
                 Box::new(|cx| Ok(Box::new(ui::DemoApp::new(cx)))),
             )
