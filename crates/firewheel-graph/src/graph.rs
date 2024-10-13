@@ -151,6 +151,20 @@ impl<C: 'static, const MBF: usize> AudioGraph<C, MBF> {
         }
     }
 
+    /// Remove all existing nodes from the graph.
+    pub fn reset(&mut self) {
+        let nodes_to_remove = self
+            .nodes
+            .iter()
+            .map(|(_, node_entry)| node_entry.id)
+            .filter(|&id| id != self.graph_in_id && id != self.graph_out_id)
+            .collect::<Vec<_>>();
+
+        for node_id in nodes_to_remove {
+            self.remove_node(node_id).unwrap();
+        }
+    }
+
     pub(crate) fn current_node_capacity(&self) -> usize {
         self.nodes.capacity()
     }

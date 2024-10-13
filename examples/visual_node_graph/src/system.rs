@@ -128,4 +128,8 @@ impl AudioSystem {
             }
         }
     }
+
+    pub fn reset(&mut self) {
+        self.cx.as_mut().unwrap().graph_mut().reset();
+    }
 }

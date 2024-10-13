@@ -274,6 +274,8 @@ impl App for DemoApp {
                 egui::widgets::global_dark_light_mode_switch(ui);
 
                 if ui.button("Clear All").clicked() {
+                    self.audio_system.reset();
+
                     self.snarl = Default::default();
                     self.snarl
                         .insert_node(egui::Pos2 { x: 0.0, y: 0.0 }, GuiAudioNode::SystemOut);
