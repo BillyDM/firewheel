@@ -34,47 +34,66 @@ impl Debug for ScheduledNode {
         write!(f, "{{ {:?}", &self.id)?;
 
         if !self.input_buffers.is_empty() {
-            write!(f, " | in:")?;
+            write!(f, " | in: [")?;
 
-            let mut first = true;
-            for in_buf in self.input_buffers.iter() {
-                if first {
-                    first = false;
-                } else {
-                    write!(f, ",")?;
-                }
-
-                write!(
-                    f,
-                    " (buf: {}, gen: {}",
-                    in_buf.buffer_index, in_buf.generation,
-                )?;
-
-                if in_buf.should_clear {
-                    write!(f, ", clear")?;
-                }
-
-                write!(f, ")")?;
+            write!(f, "{}", self.input_buffers[0].buffer_index)?;
+            for b in self.input_buffers.iter().skip(1) {
+                write!(f, ", {}", b.buffer_index)?;
             }
+
+            write!(f, "]")?;
         }
 
         if !self.output_buffers.is_empty() {
-            write!(f, " | out:")?;
+            write!(f, " | out: [")?;
 
-            let mut first = true;
-            for out_buf in self.output_buffers.iter() {
-                if first {
-                    first = false;
-                } else {
-                    write!(f, ",")?;
-                }
-
-                write!(
-                    f,
-                    " (buf: {}, gen: {})",
-                    out_buf.buffer_index, out_buf.generation
-                )?;
+            write!(f, "{}", self.output_buffers[0].buffer_index)?;
+            for b in self.output_buffers.iter().skip(1) {
+                write!(f, ", {}", b.buffer_index)?;
             }
+            
+            write!(f, "]")?;
+        }
+
+        if !self.input_buffers.is_empty() {
+            write!(f, " | in_clear: [")?;
+
+            write!(
+                f,
+                "{}",
+                if self.input_buffers[0].should_clear {
+                    'y'
+                } else {
+                    'n'
+                }
+            )?;
+            for b in self.input_buffers.iter().skip(1) {
+                write!(f, ", {}", if b.should_clear { 'y' } else { 'n' })?;
+            }
+
+            write!(f, "]")?;
+        }
+
+        if !self.input_buffers.is_empty() {
+            write!(f, " | in_gen: [")?;
+
+            write!(f, "{}", self.input_buffers[0].generation)?;
+            for b in self.input_buffers.iter().skip(1) {
+                write!(f, ", {}", b.generation)?;
+            }
+
+            write!(f, "]")?;
+        }
+
+        if !self.output_buffers.is_empty() {
+            write!(f, " | out_gen: [")?;
+
+            write!(f, "{}", self.output_buffers[0].generation)?;
+            for b in self.output_buffers.iter().skip(1) {
+                write!(f, ", {}", b.generation)?;
+            }
+
+            write!(f, "]")?;
         }
 
         write!(f, " }}")
