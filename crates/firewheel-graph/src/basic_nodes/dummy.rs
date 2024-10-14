@@ -1,13 +1,10 @@
 use std::error::Error;
 
-use firewheel_core::{
-    node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo},
-    BlockFrames,
-};
+use firewheel_core::node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo};
 
 pub struct DummyAudioNode;
 
-impl<C, const MBF: usize> AudioNode<C, MBF> for DummyAudioNode {
+impl<C> AudioNode<C> for DummyAudioNode {
     fn debug_name(&self) -> &'static str {
         "dummy"
     }
@@ -24,28 +21,29 @@ impl<C, const MBF: usize> AudioNode<C, MBF> for DummyAudioNode {
     fn activate(
         &mut self,
         _sample_rate: u32,
+        _max_block_frames: usize,
         _num_inputs: usize,
         _num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C, MBF>>, Box<dyn Error>> {
+    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn Error>> {
         Ok(Box::new(DummyAudioNodeProcessor))
     }
 }
 
 pub struct DummyAudioNodeProcessor;
 
-impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for DummyAudioNodeProcessor {
+impl<C> AudioNodeProcessor<C> for DummyAudioNodeProcessor {
     fn process(
         &mut self,
-        _frames: BlockFrames<MBF>,
-        _inputs: &[&[f32; MBF]],
-        _outputs: &mut [&mut [f32; MBF]],
+        _frames: usize,
+        _inputs: &[&[f32]],
+        _outputs: &mut [&mut [f32]],
         _proc_info: ProcInfo<C>,
     ) {
     }
 }
 
-impl<C, const MBF: usize> Into<Box<dyn AudioNode<C, MBF>>> for DummyAudioNode {
-    fn into(self) -> Box<dyn AudioNode<C, MBF>> {
+impl<C> Into<Box<dyn AudioNode<C>>> for DummyAudioNode {
+    fn into(self) -> Box<dyn AudioNode<C>> {
         Box::new(self)
     }
 }

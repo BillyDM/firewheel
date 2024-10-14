@@ -2,8 +2,6 @@ use std::fmt;
 use std::ops;
 use std::slice;
 
-use crate::BlockFrames;
-
 /// The configuration for a [`ParamSmoother`]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SmootherConfig {
@@ -20,7 +18,7 @@ pub struct SmootherConfig {
 impl Default for SmootherConfig {
     fn default() -> Self {
         Self {
-            smooth_secs: 5.0 / 1000.0,
+            smooth_secs: 10.0 / 1000.0,
             settle_epsilon: 0.00001f32,
         }
     }
@@ -47,18 +45,18 @@ impl SmootherStatus {
 }
 
 /// The output of a [`ParamSmoother`]
-pub struct SmoothedOutput<'a, const MBF: usize> {
-    pub values: &'a [f32; MBF],
+pub struct SmoothedOutput<'a> {
+    pub values: &'a [f32],
     pub status: SmootherStatus,
 }
 
-impl<'a, const MBF: usize> SmoothedOutput<'a, MBF> {
+impl<'a> SmoothedOutput<'a> {
     pub fn is_smoothing(&self) -> bool {
         self.status.is_active()
     }
 }
 
-impl<'a, const MBF: usize, I> ops::Index<I> for SmoothedOutput<'a, MBF>
+impl<'a, I> ops::Index<I> for SmoothedOutput<'a>
 where
     I: slice::SliceIndex<[f32]>,
 {
@@ -71,8 +69,8 @@ where
 }
 
 /// A simple filter used to smooth a parameter
-pub struct ParamSmoother<const MBF: usize> {
-    output: Box<[f32; MBF]>,
+pub struct ParamSmoother {
+    output: Vec<f32>,
     input: f32,
 
     status: SmootherStatus,
@@ -84,20 +82,27 @@ pub struct ParamSmoother<const MBF: usize> {
     settle_epsilon: f32,
 }
 
-impl<const MBF: usize> ParamSmoother<MBF> {
+impl ParamSmoother {
     /// Create a new parameter smoothing filter.
     ///
     /// * `val` - The initial starting value
     /// * `sample_rate` - The sampling rate
+    /// * `max_block_frames` - The maximum number of frames that can
+    /// appear in a processing block.
     /// * `config` - Additional options for a [`ParamSmoother`]
-    pub fn new(val: f32, sample_rate: u32, config: SmootherConfig) -> Self {
-        let b = (-1.0f32 / (config.smooth_secs as f32 * sample_rate as f32)).exp();
+    pub fn new(
+        val: f32,
+        sample_rate: u32,
+        max_block_frames: usize,
+        config: SmootherConfig,
+    ) -> Self {
+        let b = (-1.0f32 / (config.smooth_secs * sample_rate as f32)).exp();
         let a = 1.0f32 - b;
 
         Self {
             status: SmootherStatus::Inactive,
             input: val,
-            output: Box::new([val; MBF]),
+            output: vec![val; max_block_frames],
 
             a,
             b,
@@ -151,8 +156,8 @@ impl<const MBF: usize> ParamSmoother<MBF> {
     ///
     /// If the filter is not currently smoothing, then no processing will occur and
     /// the output (which will contain all the same value) will simply be returned.
-    pub fn process(&mut self, frames: BlockFrames<MBF>) -> SmoothedOutput<MBF> {
-        let frames = frames.get();
+    pub fn process(&mut self, frames: usize) -> SmoothedOutput {
+        let frames = frames.min(self.output.len());
 
         if self.status != SmootherStatus::Active || frames == 0 || self.output.is_empty() {
             return SmoothedOutput {
@@ -183,7 +188,7 @@ impl<const MBF: usize> ParamSmoother<MBF> {
         };
 
         SmoothedOutput {
-            values: &self.output,
+            values: &self.output[..frames],
             status: self.status,
         }
     }
@@ -194,7 +199,7 @@ impl<const MBF: usize> ParamSmoother<MBF> {
     ///
     /// If the filter is not currently smoothing, then no processing will occur and
     /// the output (which will contain all the same value) will simply be returned.
-    pub fn set_and_process(&mut self, val: f32, frames: BlockFrames<MBF>) -> SmoothedOutput<MBF> {
+    pub fn set_and_process(&mut self, val: f32, frames: usize) -> SmoothedOutput {
         self.set(val);
         self.process(frames)
     }
@@ -213,13 +218,18 @@ impl<const MBF: usize> ParamSmoother<MBF> {
             Some(self.input)
         }
     }
+
+    /// The maximum number of frames tha can appear in a single processing block.
+    pub fn max_block_frames(&self) -> usize {
+        self.output.len()
+    }
 }
 
-impl<const MBF: usize> fmt::Debug for ParamSmoother<MBF> {
+impl fmt::Debug for ParamSmoother {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct(concat!("ParamSmoother"))
             .field("output[0]", &self.output[0])
-            .field("max_block_frames", &MBF)
+            .field("max_block_frames", &self.max_block_frames())
             .field("input", &self.input)
             .field("status", &self.status)
             .field("last_output", &self.last_output)

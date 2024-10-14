@@ -1,7 +1,4 @@
-use firewheel_core::{
-    node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo},
-    BlockFrames,
-};
+use firewheel_core::node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo};
 
 pub struct HardClipNode {
     threshold_gain: f32,
@@ -15,7 +12,7 @@ impl HardClipNode {
     }
 }
 
-impl<C, const MBF: usize> AudioNode<C, MBF> for HardClipNode {
+impl<C> AudioNode<C> for HardClipNode {
     fn debug_name(&self) -> &'static str {
         "hard_clip"
     }
@@ -32,9 +29,10 @@ impl<C, const MBF: usize> AudioNode<C, MBF> for HardClipNode {
     fn activate(
         &mut self,
         _sample_rate: u32,
+        _max_block_frames: usize,
         num_inputs: usize,
         num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C, MBF>>, Box<dyn std::error::Error>> {
+    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn std::error::Error>> {
         if num_inputs != num_outputs {
             return Err(format!("The number of inputs on a HardClip node must equal the number of outputs. Got num_inputs: {}, num_outputs: {}", num_inputs, num_outputs).into());
         }
@@ -49,21 +47,25 @@ struct HardClipProcessor {
     threshold_gain: f32,
 }
 
-impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for HardClipProcessor {
+impl<C> AudioNodeProcessor<C> for HardClipProcessor {
     fn process(
         &mut self,
-        frames: BlockFrames<MBF>,
-        inputs: &[&[f32; MBF]],
-        outputs: &mut [&mut [f32; MBF]],
+        frames: usize,
+        inputs: &[&[f32]],
+        outputs: &mut [&mut [f32]],
         proc_info: ProcInfo<C>,
     ) {
-        let frames = frames.get();
-
         // Provide an optimized loop for stereo.
         if inputs.len() == 2
             && outputs.len() == 2
             && !proc_info.in_silence_mask.any_channel_silent(2)
         {
+            // Hint to the compiler to optimize loop.
+            assert!(frames <= outputs[0].len());
+            assert!(frames <= outputs[1].len());
+            assert!(frames <= inputs[0].len());
+            assert!(frames <= inputs[1].len());
+
             for i in 0..frames {
                 outputs[0][i] = inputs[0][i]
                     .min(self.threshold_gain)
@@ -82,8 +84,8 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for HardClipProcessor {
                 continue;
             }
 
-            for i in 0..frames {
-                output[i] = input[i].min(self.threshold_gain).max(-self.threshold_gain);
+            for (out_s, in_s) in output.iter_mut().zip(input.iter()) {
+                *out_s = in_s.min(self.threshold_gain).max(-self.threshold_gain);
             }
         }
 
@@ -91,8 +93,8 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for HardClipProcessor {
     }
 }
 
-impl<C, const MBF: usize> Into<Box<dyn AudioNode<C, MBF>>> for HardClipNode {
-    fn into(self) -> Box<dyn AudioNode<C, MBF>> {
+impl<C> Into<Box<dyn AudioNode<C>>> for HardClipNode {
+    fn into(self) -> Box<dyn AudioNode<C>> {
         Box::new(self)
     }
 }

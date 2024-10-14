@@ -5,8 +5,8 @@ pub use firewheel_graph::*;
 pub use firewheel_cpal::*;
 
 #[cfg(feature = "cpal")]
-pub type InactiveCtx = InactiveFwCpalCtx<(), DEFAULT_MAX_BLOCK_FRAMES>;
+pub type InactiveCtx = InactiveFwCpalCtx<()>;
 #[cfg(feature = "cpal")]
-pub type ActiveCtx = ActiveFwCpalCtx<(), DEFAULT_MAX_BLOCK_FRAMES>;
+pub type ActiveCtx = ActiveFwCpalCtx<()>;
 #[cfg(feature = "cpal")]
-pub type Context = FwCpalCtx<(), DEFAULT_MAX_BLOCK_FRAMES>;
+pub type Context = FwCpalCtx<()>;

@@ -2,7 +2,6 @@ use atomic_float::AtomicF32;
 use firewheel_core::{
     node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo},
     param::{range::percent_volume_to_raw_gain, smoother::ParamSmoother},
-    BlockFrames,
 };
 use std::sync::{atomic::Ordering, Arc};
 
@@ -39,7 +38,7 @@ impl VolumeNode {
     }
 }
 
-impl<C, const MBF: usize> AudioNode<C, MBF> for VolumeNode {
+impl<C> AudioNode<C> for VolumeNode {
     fn debug_name(&self) -> &'static str {
         "volume"
     }
@@ -56,31 +55,37 @@ impl<C, const MBF: usize> AudioNode<C, MBF> for VolumeNode {
     fn activate(
         &mut self,
         sample_rate: u32,
+        max_block_frames: usize,
         num_inputs: usize,
         num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C, MBF>>, Box<dyn std::error::Error>> {
+    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn std::error::Error>> {
         if num_inputs != num_outputs {
             return Err(format!("The number of inputs on a VolumeNode node must equal the number of outputs. Got num_inputs: {}, num_outputs: {}", num_inputs, num_outputs).into());
         }
 
         Ok(Box::new(VolumeProcessor {
             raw_gain: Arc::clone(&self.raw_gain),
-            gain_smoother: ParamSmoother::new(self.raw_gain(), sample_rate, Default::default()),
+            gain_smoother: ParamSmoother::new(
+                self.raw_gain(),
+                sample_rate,
+                max_block_frames,
+                Default::default(),
+            ),
         }))
     }
 }
 
-struct VolumeProcessor<const MBF: usize> {
+struct VolumeProcessor {
     raw_gain: Arc<AtomicF32>,
-    gain_smoother: ParamSmoother<MBF>,
+    gain_smoother: ParamSmoother,
 }
 
-impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for VolumeProcessor<MBF> {
+impl<C> AudioNodeProcessor<C> for VolumeProcessor {
     fn process(
         &mut self,
-        frames: BlockFrames<MBF>,
-        inputs: &[&[f32; MBF]],
-        outputs: &mut [&mut [f32; MBF]],
+        frames: usize,
+        inputs: &[&[f32]],
+        outputs: &mut [&mut [f32]],
         proc_info: ProcInfo<C>,
     ) {
         let raw_gain = self.raw_gain.load(Ordering::Relaxed);
@@ -103,10 +108,17 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for VolumeProcessor<MBF> {
 
         *proc_info.out_silence_mask = proc_info.in_silence_mask;
 
-        let frames = frames.get();
+        // Hint to the compiler to optimize loop.
+        assert!(frames <= gain.values.len());
 
         // Provide an optimized loop for stereo.
         if inputs.len() == 2 && outputs.len() == 2 {
+            // Hint to the compiler to optimize loop.
+            assert!(frames <= outputs[0].len());
+            assert!(frames <= outputs[1].len());
+            assert!(frames <= inputs[0].len());
+            assert!(frames <= inputs[1].len());
+
             for i in 0..frames {
                 outputs[0][i] = inputs[0][i] * gain[i];
                 outputs[1][i] = inputs[1][i] * gain[i];
@@ -121,6 +133,9 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for VolumeProcessor<MBF> {
                 continue;
             }
 
+            // Hint to the compiler to optimize loop.
+            assert!(frames <= input.len());
+
             for i in 0..frames {
                 output[i] = input[i] * gain[i];
             }
@@ -128,8 +143,8 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for VolumeProcessor<MBF> {
     }
 }
 
-impl<C, const MBF: usize> Into<Box<dyn AudioNode<C, MBF>>> for VolumeNode {
-    fn into(self) -> Box<dyn AudioNode<C, MBF>> {
+impl<C> Into<Box<dyn AudioNode<C>>> for VolumeNode {
+    fn into(self) -> Box<dyn AudioNode<C>> {
         Box::new(self)
     }
 }

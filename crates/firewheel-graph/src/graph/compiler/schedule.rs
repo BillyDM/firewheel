@@ -1,8 +1,8 @@
 use arrayvec::ArrayVec;
 use smallvec::SmallVec;
-use std::{cell::UnsafeCell, fmt::Debug};
+use std::fmt::Debug;
 
-use firewheel_core::{node::AudioNodeProcessor, BlockFrames, SilenceMask};
+use firewheel_core::{node::AudioNodeProcessor, SilenceMask};
 
 use super::NodeID;
 
@@ -51,7 +51,7 @@ impl Debug for ScheduledNode {
             for b in self.output_buffers.iter().skip(1) {
                 write!(f, ", {}", b.buffer_index)?;
             }
-            
+
             write!(f, "]")?;
         }
 
@@ -125,18 +125,18 @@ pub(super) struct OutBufferAssignment {
     pub generation: usize,
 }
 
-pub struct ScheduleHeapData<C, const MBF: usize> {
-    pub schedule: CompiledSchedule<MBF>,
+pub struct ScheduleHeapData<C> {
+    pub schedule: CompiledSchedule,
     pub nodes_to_remove: Vec<NodeID>,
-    pub removed_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor<C, MBF>>)>,
-    pub new_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor<C, MBF>>)>,
+    pub removed_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor<C>>)>,
+    pub new_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor<C>>)>,
 }
 
-impl<C, const MBF: usize> ScheduleHeapData<C, MBF> {
+impl<C> ScheduleHeapData<C> {
     pub fn new(
-        schedule: CompiledSchedule<MBF>,
+        schedule: CompiledSchedule,
         nodes_to_remove: Vec<NodeID>,
-        new_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor<C, MBF>>)>,
+        new_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor<C>>)>,
     ) -> Self {
         let num_nodes_to_remove = nodes_to_remove.len();
 
@@ -149,7 +149,7 @@ impl<C, const MBF: usize> ScheduleHeapData<C, MBF> {
     }
 }
 
-impl<C, const MBF: usize> Debug for ScheduleHeapData<C, MBF> {
+impl<C> Debug for ScheduleHeapData<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let new_node_processors: Vec<NodeID> =
             self.new_node_processors.iter().map(|(id, _)| *id).collect();
@@ -163,14 +163,16 @@ impl<C, const MBF: usize> Debug for ScheduleHeapData<C, MBF> {
 }
 
 /// A [CompiledSchedule] is the output of the graph compiler.
-pub struct CompiledSchedule<const MBF: usize> {
+pub struct CompiledSchedule {
     schedule: Vec<ScheduledNode>,
 
-    buffers: Vec<UnsafeCell<[f32; MBF]>>,
+    buffers: Vec<f32>,
     buffer_silence_flags: Vec<bool>,
+    num_buffers: usize,
+    max_block_frames: usize,
 }
 
-impl<const MBF: usize> Debug for CompiledSchedule<MBF> {
+impl Debug for CompiledSchedule {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "CompiledSchedule {{")?;
 
@@ -182,38 +184,52 @@ impl<const MBF: usize> Debug for CompiledSchedule<MBF> {
 
         writeln!(f, "    }}")?;
 
-        writeln!(f, "    num_buffers: {}", self.buffers.len())?;
+        writeln!(f, "    num_buffers: {}", self.num_buffers)?;
+        writeln!(f, "    max_block_frames: {}", self.max_block_frames)?;
 
         writeln!(f, "}}")
     }
 }
 
-impl<const MBF: usize> CompiledSchedule<MBF> {
-    pub(super) fn new(schedule: Vec<ScheduledNode>, num_buffers: usize) -> Self {
+impl CompiledSchedule {
+    pub(super) fn new(
+        schedule: Vec<ScheduledNode>,
+        num_buffers: usize,
+        max_block_frames: usize,
+    ) -> Self {
         Self {
             schedule,
-            buffers: (0..num_buffers)
-                .map(|_| UnsafeCell::new([0.0; MBF]))
-                .collect(),
+            buffers: vec![0.0; num_buffers * max_block_frames],
             buffer_silence_flags: vec![false; num_buffers],
+            num_buffers,
+            max_block_frames,
         }
+    }
+
+    pub fn max_block_frames(&self) -> usize {
+        self.max_block_frames
     }
 
     pub fn prepare_graph_inputs(
         &mut self,
+        frames: usize,
         num_stream_inputs: usize,
-        fill_inputs: impl FnOnce(&mut [&mut [f32; MBF]]) -> SilenceMask,
+        fill_inputs: impl FnOnce(&mut [&mut [f32]]) -> SilenceMask,
     ) {
+        let frames = frames.min(self.max_block_frames);
+
         let graph_in_node = self.schedule.first().unwrap();
 
-        let mut inputs: ArrayVec<&mut [f32; MBF], 64> = ArrayVec::new();
+        let mut inputs: ArrayVec<&mut [f32], 64> = ArrayVec::new();
 
         let fill_input_len = num_stream_inputs.min(graph_in_node.output_buffers.len());
 
         for i in 0..fill_input_len {
-            inputs.push(buffer_mut(
+            inputs.push(buffer_slice_mut(
                 &self.buffers,
                 graph_in_node.output_buffers[i].buffer_index,
+                self.max_block_frames,
+                frames,
             ));
         }
 
@@ -227,7 +243,8 @@ impl<const MBF: usize> CompiledSchedule<MBF> {
 
         if fill_input_len < graph_in_node.output_buffers.len() {
             for b in graph_in_node.output_buffers.iter().skip(fill_input_len) {
-                let buf_slice = buffer_mut(&self.buffers, b.buffer_index);
+                let buf_slice =
+                    buffer_slice_mut(&self.buffers, b.buffer_index, self.max_block_frames, frames);
                 buf_slice.fill(0.0);
 
                 *silence_mask_mut(&mut self.buffer_silence_flags, b.buffer_index) = true;
@@ -237,12 +254,15 @@ impl<const MBF: usize> CompiledSchedule<MBF> {
 
     pub fn read_graph_outputs(
         &mut self,
+        frames: usize,
         num_stream_outputs: usize,
-        read_outputs: impl FnOnce(&[&[f32; MBF]], SilenceMask),
+        read_outputs: impl FnOnce(&[&[f32]], SilenceMask),
     ) {
+        let frames = frames.min(self.max_block_frames);
+
         let graph_out_node = self.schedule.last().unwrap();
 
-        let mut outputs: ArrayVec<&[f32; MBF], 64> = ArrayVec::new();
+        let mut outputs: ArrayVec<&[f32], 64> = ArrayVec::new();
 
         let mut silence_mask = SilenceMask::NONE_SILENT;
 
@@ -255,7 +275,12 @@ impl<const MBF: usize> CompiledSchedule<MBF> {
                 silence_mask.set_channel(i, true);
             }
 
-            outputs.push(buffer_mut(&self.buffers, buffer_index));
+            outputs.push(buffer_slice_mut(
+                &self.buffers,
+                buffer_index,
+                self.max_block_frames,
+                frames,
+            ));
         }
 
         (read_outputs)(outputs.as_slice(), silence_mask);
@@ -263,18 +288,13 @@ impl<const MBF: usize> CompiledSchedule<MBF> {
 
     pub fn process(
         &mut self,
-        frames: BlockFrames<MBF>,
-        mut process: impl FnMut(
-            NodeID,
-            SilenceMask,
-            &[&[f32; MBF]],
-            &mut [&mut [f32; MBF]],
-        ) -> SilenceMask,
+        frames: usize,
+        mut process: impl FnMut(NodeID, SilenceMask, &[&[f32]], &mut [&mut [f32]]) -> SilenceMask,
     ) {
-        let frames = frames.get();
+        let frames = frames.min(self.max_block_frames);
 
-        let mut inputs: ArrayVec<&[f32; MBF], 64> = ArrayVec::new();
-        let mut outputs: ArrayVec<&mut [f32; MBF], 64> = ArrayVec::new();
+        let mut inputs: ArrayVec<&[f32], 64> = ArrayVec::new();
+        let mut outputs: ArrayVec<&mut [f32], 64> = ArrayVec::new();
 
         for scheduled_node in self.schedule.iter() {
             let mut in_silence_mask = SilenceMask::NONE_SILENT;
@@ -283,7 +303,8 @@ impl<const MBF: usize> CompiledSchedule<MBF> {
             outputs.clear();
 
             for (i, b) in scheduled_node.input_buffers.iter().enumerate() {
-                let buf = buffer_mut(&self.buffers, b.buffer_index);
+                let buf =
+                    buffer_slice_mut(&self.buffers, b.buffer_index, self.max_block_frames, frames);
                 let s = silence_mask_mut(&mut self.buffer_silence_flags, b.buffer_index);
 
                 if b.should_clear {
@@ -299,7 +320,12 @@ impl<const MBF: usize> CompiledSchedule<MBF> {
             }
 
             for b in scheduled_node.output_buffers.iter() {
-                outputs.push(buffer_mut(&self.buffers, b.buffer_index));
+                outputs.push(buffer_slice_mut(
+                    &self.buffers,
+                    b.buffer_index,
+                    self.max_block_frames,
+                    frames,
+                ));
             }
 
             let out_silence_mask = (process)(
@@ -318,16 +344,23 @@ impl<const MBF: usize> CompiledSchedule<MBF> {
 }
 
 #[inline]
-fn buffer_mut<'a, const MBF: usize>(
-    buffers: &'a [UnsafeCell<[f32; MBF]>],
+fn buffer_slice_mut<'a>(
+    buffers: &'a Vec<f32>,
     buffer_index: usize,
-) -> &'a mut [f32; MBF] {
+    max_block_frames: usize,
+    frames: usize,
+) -> &'a mut [f32] {
     // SAFETY
     //
     // `buffer_index` is gauranteed to be valid because [`BufferAllocator`]
     // correctly counts the total number of buffers used, and therefore
     // `b.buffer_index` is gauranteed to be less than the value of
     // `num_buffers` that was passed into [`CompiledSchedule::new`].
+    //
+    // The methods calling this function make sure that `frames <= max_block_frames`,
+    // and `buffers` was initialized with a length of `num_buffers * max_block_frames`
+    // in the constructor. And because `buffer_index` is gauranteed to be less than
+    // `num_buffers`, this slice will always point to a valid range.
     //
     // Due to the way [`GraphIR::solve_buffer_requirements`] works, no
     // two buffer indexes in a single `ScheduledNode` can alias. (A buffer
@@ -337,7 +370,12 @@ fn buffer_mut<'a, const MBF: usize>(
     // Also, `self` is borrowed mutably here, ensuring that the caller cannot
     // call any other method on [`CompiledSchedule`] while those buffers are
     // still borrowed.
-    unsafe { &mut *UnsafeCell::get(buffers.get_unchecked(buffer_index)) }
+    unsafe {
+        std::slice::from_raw_parts_mut(
+            (buffers.as_ptr() as *mut f32).add(buffer_index * max_block_frames),
+            frames,
+        )
+    }
 }
 
 #[inline]
@@ -379,7 +417,7 @@ mod tests {
 
         let edge0 = graph.connect(node0, 0, node1, 0, false).unwrap();
 
-        let schedule = graph.compile_internal().unwrap();
+        let schedule = graph.compile_internal(128).unwrap();
 
         dbg!(&schedule);
 
@@ -438,7 +476,7 @@ mod tests {
         let edge9 = graph.connect(node5, 0, node6, 0, false).unwrap();
         let edge10 = graph.connect(node5, 1, node6, 1, false).unwrap();
 
-        let schedule = graph.compile_internal().unwrap();
+        let schedule = graph.compile_internal(128).unwrap();
 
         dbg!(&schedule);
 
@@ -522,7 +560,7 @@ mod tests {
         let edge5 = graph.connect(node4, 0, node5, 0, false).unwrap();
         let edge6 = graph.connect(node4, 2, node6, 0, false).unwrap();
 
-        let schedule = graph.compile_internal().unwrap();
+        let schedule = graph.compile_internal(128).unwrap();
 
         dbg!(&schedule);
 
@@ -562,8 +600,8 @@ mod tests {
     fn verify_node(
         node_id: NodeID,
         in_ports_that_should_clear: &[bool],
-        schedule: &CompiledSchedule<256>,
-        graph: &AudioGraph<(), 256>,
+        schedule: &CompiledSchedule,
+        graph: &AudioGraph<()>,
     ) {
         let node = graph.node_info(node_id).unwrap();
         let scheduled_node = schedule.schedule.iter().find(|&s| s.id == node_id).unwrap();
@@ -596,7 +634,7 @@ mod tests {
         }
     }
 
-    fn verify_edge(edge_id: EdgeID, graph: &AudioGraph<(), 256>, schedule: &CompiledSchedule<256>) {
+    fn verify_edge(edge_id: EdgeID, graph: &AudioGraph<()>, schedule: &CompiledSchedule) {
         let edge = graph.edge(edge_id).unwrap();
 
         let mut src_buffer_idx = None;
@@ -623,7 +661,7 @@ mod tests {
 
     #[test]
     fn many_to_one_detection() {
-        let mut graph = AudioGraph::<(), 256>::new(&AudioGraphConfig {
+        let mut graph = AudioGraph::<()>::new(&AudioGraphConfig {
             num_graph_inputs: 2,
             num_graph_outputs: 1,
             ..Default::default()
@@ -646,7 +684,7 @@ mod tests {
 
     #[test]
     fn cycle_detection() {
-        let mut graph = AudioGraph::<(), 256>::new(&AudioGraphConfig {
+        let mut graph = AudioGraph::<()>::new(&AudioGraphConfig {
             num_graph_inputs: 0,
             num_graph_outputs: 2,
             ..Default::default()

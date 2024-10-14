@@ -9,18 +9,106 @@ use crate::system::{AudioSystem, NodeType};
 
 const CABLE_COLOR: Color32 = Color32::from_rgb(0xb0, 0x00, 0xb0);
 
-enum GuiAudioNode {
+pub enum GuiAudioNode {
     #[allow(unused)]
     SystemIn,
     SystemOut,
-    Dynamic(DynGuiAudioNode),
+    BeepTest {
+        id: firewheel::graph::NodeID,
+    },
+    HardClip {
+        id: firewheel::graph::NodeID,
+    },
+    MonoToStereo {
+        id: firewheel::graph::NodeID,
+    },
+    StereoToMono {
+        id: firewheel::graph::NodeID,
+    },
+    SumMono4Ins {
+        id: firewheel::graph::NodeID,
+    },
+    SumStereo2Ins {
+        id: firewheel::graph::NodeID,
+    },
+    SumStereo4Ins {
+        id: firewheel::graph::NodeID,
+    },
+    VolumeMono {
+        id: firewheel::graph::NodeID,
+        percent: f32,
+    },
+    VolumeStereo {
+        id: firewheel::graph::NodeID,
+        percent: f32,
+    },
 }
 
-pub struct DynGuiAudioNode {
-    pub id: firewheel::graph::NodeID,
-    pub num_inputs: usize,
-    pub num_outputs: usize,
-    pub node_type: NodeType,
+impl GuiAudioNode {
+    fn node_id(&self, audio_system: &AudioSystem) -> firewheel::graph::NodeID {
+        match self {
+            &Self::SystemIn => audio_system.graph_in_node(),
+            &Self::SystemOut => audio_system.graph_out_node(),
+            &Self::BeepTest { id } => id,
+            &Self::HardClip { id } => id,
+            &Self::MonoToStereo { id } => id,
+            &Self::StereoToMono { id } => id,
+            &Self::SumMono4Ins { id } => id,
+            &Self::SumStereo2Ins { id } => id,
+            &Self::SumStereo4Ins { id } => id,
+            &Self::VolumeMono { id, .. } => id,
+            &Self::VolumeStereo { id, .. } => id,
+        }
+    }
+
+    fn title(&self) -> String {
+        match self {
+            &Self::SystemIn => "System In",
+            &Self::SystemOut => "System Out",
+            &Self::BeepTest { .. } => "Beep Test",
+            &Self::HardClip { .. } => "Hard Clip",
+            &Self::MonoToStereo { .. } => "Mono To Stereo",
+            &Self::StereoToMono { .. } => "Stereo To Mono",
+            &Self::SumMono4Ins { .. } => "Sum (Mono, 4 Ins)",
+            &Self::SumStereo2Ins { .. } => "Sum (Stereo, 2 Ins)",
+            &Self::SumStereo4Ins { .. } => "Sum (Stereo, 4 Ins)",
+            &Self::VolumeMono { .. } => "Volume (Mono)",
+            &Self::VolumeStereo { .. } => "Volume (Stereo)",
+        }
+        .into()
+    }
+
+    fn num_inputs(&self) -> usize {
+        match self {
+            &Self::SystemIn => 0,
+            &Self::SystemOut => 2,
+            &Self::BeepTest { .. } => 0,
+            &Self::HardClip { .. } => 2,
+            &Self::MonoToStereo { .. } => 1,
+            &Self::StereoToMono { .. } => 2,
+            &Self::SumMono4Ins { .. } => 4,
+            &Self::SumStereo2Ins { .. } => 4,
+            &Self::SumStereo4Ins { .. } => 8,
+            &Self::VolumeMono { .. } => 1,
+            &Self::VolumeStereo { .. } => 2,
+        }
+    }
+
+    fn num_outputs(&self) -> usize {
+        match self {
+            &Self::SystemIn => 1,
+            &Self::SystemOut => 0,
+            &Self::BeepTest { .. } => 1,
+            &Self::HardClip { .. } => 2,
+            &Self::MonoToStereo { .. } => 2,
+            &Self::StereoToMono { .. } => 1,
+            &Self::SumMono4Ins { .. } => 1,
+            &Self::SumStereo2Ins { .. } => 2,
+            &Self::SumStereo4Ins { .. } => 2,
+            &Self::VolumeMono { .. } => 1,
+            &Self::VolumeStereo { .. } => 2,
+        }
+    }
 }
 
 struct DemoViewer<'a> {
@@ -35,17 +123,8 @@ impl<'a> DemoViewer<'a> {
         let Some(dst_node) = snarl.get_node(to.node) else {
             return;
         };
-
-        let src_node = match src_node {
-            GuiAudioNode::SystemIn => self.audio_system.graph_in_node(),
-            GuiAudioNode::SystemOut => self.audio_system.graph_out_node(),
-            GuiAudioNode::Dynamic(n) => n.id,
-        };
-        let dst_node = match dst_node {
-            GuiAudioNode::SystemIn => self.audio_system.graph_in_node(),
-            GuiAudioNode::SystemOut => self.audio_system.graph_out_node(),
-            GuiAudioNode::Dynamic(n) => n.id,
-        };
+        let src_node = src_node.node_id(&self.audio_system);
+        let dst_node = dst_node.node_id(&self.audio_system);
 
         self.audio_system
             .disconnect(src_node, dst_node, from.output, to.input);
@@ -72,19 +151,14 @@ impl<'a> SnarlViewer<GuiAudioNode> for DemoViewer<'a> {
     }
 
     fn connect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<GuiAudioNode>) {
-        let src_node = snarl.get_node(from.id.node).unwrap();
-        let dst_node = snarl.get_node(to.id.node).unwrap();
-
-        let src_node = match src_node {
-            GuiAudioNode::SystemIn => self.audio_system.graph_in_node(),
-            GuiAudioNode::SystemOut => self.audio_system.graph_out_node(),
-            GuiAudioNode::Dynamic(n) => n.id,
-        };
-        let dst_node = match dst_node {
-            GuiAudioNode::SystemIn => self.audio_system.graph_in_node(),
-            GuiAudioNode::SystemOut => self.audio_system.graph_out_node(),
-            GuiAudioNode::Dynamic(n) => n.id,
-        };
+        let src_node = snarl
+            .get_node(from.id.node)
+            .unwrap()
+            .node_id(&self.audio_system);
+        let dst_node = snarl
+            .get_node(to.id.node)
+            .unwrap()
+            .node_id(&self.audio_system);
 
         if let Err(e) = self
             .audio_system
@@ -98,35 +172,15 @@ impl<'a> SnarlViewer<GuiAudioNode> for DemoViewer<'a> {
     }
 
     fn title(&mut self, node: &GuiAudioNode) -> String {
-        match node {
-            GuiAudioNode::SystemIn => "System In",
-            GuiAudioNode::SystemOut => "System Out",
-            GuiAudioNode::Dynamic(n) => match n.node_type {
-                NodeType::BeepTest => "Beep Test",
-                NodeType::HardClip => "Hard Clip",
-                NodeType::MonoToStereo => "Mono To Stereo",
-                NodeType::StereoToMono => "Stereo To Mono",
-                NodeType::Sum => "Sum",
-                NodeType::Volume => "Volume",
-            },
-        }
-        .into()
+        node.title()
     }
 
     fn inputs(&mut self, node: &GuiAudioNode) -> usize {
-        match node {
-            GuiAudioNode::SystemIn => 0,
-            GuiAudioNode::SystemOut => 2,
-            GuiAudioNode::Dynamic(n) => n.num_inputs,
-        }
+        node.num_inputs()
     }
 
     fn outputs(&mut self, node: &GuiAudioNode) -> usize {
-        match node {
-            GuiAudioNode::SystemIn => 2,
-            GuiAudioNode::SystemOut => 0,
-            GuiAudioNode::Dynamic(n) => n.num_outputs,
-        }
+        node.num_outputs()
     }
 
     fn show_input(
@@ -163,32 +217,47 @@ impl<'a> SnarlViewer<GuiAudioNode> for DemoViewer<'a> {
         ui.label("Add node");
         if ui.button("Beep Test").clicked() {
             let node = self.audio_system.add_node(NodeType::BeepTest);
-            snarl.insert_node(pos, GuiAudioNode::Dynamic(node));
+            snarl.insert_node(pos, node);
             ui.close_menu();
         }
         if ui.button("Hard Clip").clicked() {
             let node = self.audio_system.add_node(NodeType::HardClip);
-            snarl.insert_node(pos, GuiAudioNode::Dynamic(node));
+            snarl.insert_node(pos, node);
             ui.close_menu();
         }
         if ui.button("Mono To Stereo").clicked() {
             let node = self.audio_system.add_node(NodeType::MonoToStereo);
-            snarl.insert_node(pos, GuiAudioNode::Dynamic(node));
+            snarl.insert_node(pos, node);
             ui.close_menu();
         }
         if ui.button("Stereo To Mono").clicked() {
             let node = self.audio_system.add_node(NodeType::StereoToMono);
-            snarl.insert_node(pos, GuiAudioNode::Dynamic(node));
+            snarl.insert_node(pos, node);
             ui.close_menu();
         }
-        if ui.button("Sum").clicked() {
-            let node = self.audio_system.add_node(NodeType::Sum);
-            snarl.insert_node(pos, GuiAudioNode::Dynamic(node));
+        if ui.button("Sum (mono, 4 ins)").clicked() {
+            let node = self.audio_system.add_node(NodeType::SumMono4Ins);
+            snarl.insert_node(pos, node);
             ui.close_menu();
         }
-        if ui.button("Volume").clicked() {
-            let node = self.audio_system.add_node(NodeType::Volume);
-            snarl.insert_node(pos, GuiAudioNode::Dynamic(node));
+        if ui.button("Sum (stereo, 2 ins)").clicked() {
+            let node = self.audio_system.add_node(NodeType::SumStereo2Ins);
+            snarl.insert_node(pos, node);
+            ui.close_menu();
+        }
+        if ui.button("Sum (stereo, 4 ins)").clicked() {
+            let node = self.audio_system.add_node(NodeType::SumStereo4Ins);
+            snarl.insert_node(pos, node);
+            ui.close_menu();
+        }
+        if ui.button("Volume (mono)").clicked() {
+            let node = self.audio_system.add_node(NodeType::VolumeMono);
+            snarl.insert_node(pos, node);
+            ui.close_menu();
+        }
+        if ui.button("Volume (stereo)").clicked() {
+            let node = self.audio_system.add_node(NodeType::VolumeStereo);
+            snarl.insert_node(pos, node);
             ui.close_menu();
         }
     }
@@ -214,21 +283,60 @@ impl<'a> SnarlViewer<GuiAudioNode> for DemoViewer<'a> {
         _scale: f32,
         snarl: &mut Snarl<GuiAudioNode>,
     ) {
-        match snarl.get_node(node).unwrap() {
-            GuiAudioNode::Dynamic(n) => {
+        let n = snarl.get_node(node).unwrap();
+
+        match &n {
+            GuiAudioNode::SystemIn | GuiAudioNode::SystemOut => {}
+            _ => {
                 ui.label("Node menu");
                 if ui.button("Remove").clicked() {
-                    self.audio_system.remove_node(n.id);
+                    self.audio_system.remove_node(n.node_id(&self.audio_system));
                     snarl.remove_node(node);
                     ui.close_menu();
                 }
             }
-            _ => {}
         }
     }
 
     fn has_on_hover_popup(&mut self, _: &GuiAudioNode) -> bool {
         false
+    }
+
+    fn has_body(&mut self, node: &GuiAudioNode) -> bool {
+        match node {
+            GuiAudioNode::VolumeMono { .. } | GuiAudioNode::VolumeStereo { .. } => true,
+            _ => false,
+        }
+    }
+
+    fn show_body(
+        &mut self,
+        node: egui_snarl::NodeId,
+        _inputs: &[InPin],
+        _outputs: &[OutPin],
+        ui: &mut Ui,
+        _scale: f32,
+        snarl: &mut Snarl<GuiAudioNode>,
+    ) {
+        match snarl.get_node_mut(node).unwrap() {
+            GuiAudioNode::VolumeMono { id, percent, .. } => {
+                if ui
+                    .add(egui::Slider::new(percent, 0.0..=200.0).text("volume"))
+                    .changed()
+                {
+                    self.audio_system.set_volume(*id, *percent);
+                }
+            }
+            GuiAudioNode::VolumeStereo { id, percent, .. } => {
+                if ui
+                    .add(egui::Slider::new(percent, 0.0..=200.0).text("volume"))
+                    .changed()
+                {
+                    self.audio_system.set_volume(*id, *percent);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

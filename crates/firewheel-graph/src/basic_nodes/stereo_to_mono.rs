@@ -1,11 +1,8 @@
-use firewheel_core::{
-    node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo},
-    BlockFrames,
-};
+use firewheel_core::node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo};
 
 pub struct StereoToMonoNode;
 
-impl<C, const MBF: usize> AudioNode<C, MBF> for StereoToMonoNode {
+impl<C> AudioNode<C> for StereoToMonoNode {
     fn debug_name(&self) -> &'static str {
         "stereo_to_mono"
     }
@@ -22,21 +19,22 @@ impl<C, const MBF: usize> AudioNode<C, MBF> for StereoToMonoNode {
     fn activate(
         &mut self,
         _sample_rate: u32,
+        _max_block_frames: usize,
         _num_inputs: usize,
         _num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C, MBF>>, Box<dyn std::error::Error>> {
+    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn std::error::Error>> {
         Ok(Box::new(StereoToMonoProcessor))
     }
 }
 
 struct StereoToMonoProcessor;
 
-impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for StereoToMonoProcessor {
+impl<C> AudioNodeProcessor<C> for StereoToMonoProcessor {
     fn process(
         &mut self,
-        frames: BlockFrames<MBF>,
-        inputs: &[&[f32; MBF]],
-        outputs: &mut [&mut [f32; MBF]],
+        frames: usize,
+        inputs: &[&[f32]],
+        outputs: &mut [&mut [f32]],
         proc_info: ProcInfo<C>,
     ) {
         if proc_info.in_silence_mask.all_channels_silent(2)
@@ -47,14 +45,17 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for StereoToMonoProcessor {
             return;
         }
 
-        for i in 0..frames.get() {
-            outputs[0][i] = (inputs[0][i] + inputs[1][i]) * 0.5;
+        for (out_s, (&in1, &in2)) in outputs[0]
+            .iter_mut()
+            .zip(inputs[0].iter().zip(inputs[1].iter()))
+        {
+            *out_s = (in1 + in2) * 0.5;
         }
     }
 }
 
-impl<C, const MBF: usize> Into<Box<dyn AudioNode<C, MBF>>> for StereoToMonoNode {
-    fn into(self) -> Box<dyn AudioNode<C, MBF>> {
+impl<C> Into<Box<dyn AudioNode<C>>> for StereoToMonoNode {
+    fn into(self) -> Box<dyn AudioNode<C>> {
         Box::new(self)
     }
 }

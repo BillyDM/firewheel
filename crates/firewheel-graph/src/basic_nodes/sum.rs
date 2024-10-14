@@ -1,11 +1,8 @@
-use firewheel_core::{
-    node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo},
-    BlockFrames,
-};
+use firewheel_core::node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo};
 
 pub struct SumNode;
 
-impl<C, const MBF: usize> AudioNode<C, MBF> for SumNode {
+impl<C> AudioNode<C> for SumNode {
     fn debug_name(&self) -> &'static str {
         "sum"
     }
@@ -22,9 +19,10 @@ impl<C, const MBF: usize> AudioNode<C, MBF> for SumNode {
     fn activate(
         &mut self,
         _sample_rate: u32,
+        _max_block_frames: usize,
         num_inputs: usize,
         num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C, MBF>>, Box<dyn std::error::Error>> {
+    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn std::error::Error>> {
         if num_inputs % num_outputs != 0 {
             return Err(format!("The number of inputs on a SumNode must be a multiple of the number of outputs. Got num_inputs: {}, num_outputs: {}", num_inputs, num_outputs).into());
         }
@@ -39,12 +37,12 @@ struct SumNodeProcessor {
     num_in_ports: usize,
 }
 
-impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for SumNodeProcessor {
+impl<C> AudioNodeProcessor<C> for SumNodeProcessor {
     fn process(
         &mut self,
-        frames: BlockFrames<MBF>,
-        inputs: &[&[f32; MBF]],
-        outputs: &mut [&mut [f32; MBF]],
+        frames: usize,
+        inputs: &[&[f32]],
+        outputs: &mut [&mut [f32]],
         proc_info: ProcInfo<C>,
     ) {
         let num_inputs = inputs.len();
@@ -55,8 +53,6 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for SumNodeProcessor {
             firewheel_core::util::clear_all_outputs(frames, outputs, proc_info.out_silence_mask);
             return;
         }
-
-        let frames = frames.get();
 
         if num_inputs == num_outputs {
             // No need to sum, just copy.
@@ -73,8 +69,9 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for SumNodeProcessor {
                 assert!(num_inputs >= (num_outputs * 2));
 
                 for (ch_i, out) in outputs.iter_mut().enumerate() {
-                    let in1 = &inputs[ch_i];
-                    let in2 = &inputs[(num_outputs * 1) + ch_i];
+                    let in1 = &inputs[ch_i][..frames];
+                    let in2 = &inputs[(num_outputs * 1) + ch_i][..frames];
+                    let out = &mut out[0..frames];
 
                     for i in 0..frames {
                         out[i] = in1[i] + in2[i];
@@ -85,9 +82,10 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for SumNodeProcessor {
                 assert!(num_inputs >= (num_outputs * 3));
 
                 for (ch_i, out) in outputs.iter_mut().enumerate() {
-                    let in1 = &inputs[ch_i];
-                    let in2 = &inputs[(num_outputs * 1) + ch_i];
-                    let in3 = &inputs[(num_outputs * 2) + ch_i];
+                    let in1 = &inputs[ch_i][..frames];
+                    let in2 = &inputs[(num_outputs * 1) + ch_i][..frames];
+                    let in3 = &inputs[(num_outputs * 2) + ch_i][..frames];
+                    let out = &mut out[0..frames];
 
                     for i in 0..frames {
                         out[i] = in1[i] + in2[i] + in3[i];
@@ -98,10 +96,11 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for SumNodeProcessor {
                 assert!(num_inputs >= (num_outputs * 4));
 
                 for (ch_i, out) in outputs.iter_mut().enumerate() {
-                    let in1 = &inputs[ch_i];
-                    let in2 = &inputs[(num_outputs * 1) + ch_i];
-                    let in3 = &inputs[(num_outputs * 2) + ch_i];
-                    let in4 = &inputs[(num_outputs * 3) + ch_i];
+                    let in1 = &inputs[ch_i][..frames];
+                    let in2 = &inputs[(num_outputs * 1) + ch_i][..frames];
+                    let in3 = &inputs[(num_outputs * 2) + ch_i][..frames];
+                    let in4 = &inputs[(num_outputs * 3) + ch_i][..frames];
+                    let out = &mut out[0..frames];
 
                     for i in 0..frames {
                         out[i] = in1[i] + in2[i] + in3[i] + in4[i];
@@ -112,10 +111,18 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for SumNodeProcessor {
                 assert!(num_inputs >= (num_outputs * n));
 
                 for (ch_i, out) in outputs.iter_mut().enumerate() {
-                    out[..frames].copy_from_slice(&inputs[ch_i][..frames]);
+                    let out = &mut out[0..frames];
+
+                    out.copy_from_slice(&inputs[ch_i][..frames]);
 
                     for in_port_i in 1..n {
-                        let input = &inputs[(num_outputs * in_port_i) + ch_i];
+                        let in_ch_i = (num_outputs * in_port_i) + ch_i;
+
+                        if proc_info.in_silence_mask.is_channel_silent(in_ch_i) {
+                            continue;
+                        }
+
+                        let input = &inputs[in_ch_i][..frames];
 
                         for i in 0..frames {
                             out[i] += input[i];
@@ -127,8 +134,8 @@ impl<C, const MBF: usize> AudioNodeProcessor<C, MBF> for SumNodeProcessor {
     }
 }
 
-impl<C, const MBF: usize> Into<Box<dyn AudioNode<C, MBF>>> for SumNode {
-    fn into(self) -> Box<dyn AudioNode<C, MBF>> {
+impl<C> Into<Box<dyn AudioNode<C>>> for SumNode {
+    fn into(self) -> Box<dyn AudioNode<C>> {
         Box::new(self)
     }
 }
