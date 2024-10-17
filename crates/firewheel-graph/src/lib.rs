@@ -1,7 +1,7 @@
 pub mod backend;
 pub mod basic_nodes;
-pub mod context;
+mod context;
 pub mod graph;
 pub mod processor;
 
-pub use context::{ActiveFwCtx, FwCtx, InactiveFwCtx};
+pub use context::{FirewheelGraphCtx, UpdateStatus};

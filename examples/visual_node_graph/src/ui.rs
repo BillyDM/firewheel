@@ -404,7 +404,9 @@ impl App for DemoApp {
             );
         });
 
-        if self.audio_system.update() {
+        self.audio_system.update();
+
+        if !self.audio_system.is_activated() {
             // TODO: Don't panic.
             panic!("Audio system disconnected");
         }

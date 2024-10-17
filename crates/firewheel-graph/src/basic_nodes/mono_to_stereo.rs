@@ -2,7 +2,7 @@ use firewheel_core::node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInf
 
 pub struct MonoToStereoNode;
 
-impl<C> AudioNode<C> for MonoToStereoNode {
+impl AudioNode for MonoToStereoNode {
     fn debug_name(&self) -> &'static str {
         "mono_to_stereo"
     }
@@ -22,20 +22,20 @@ impl<C> AudioNode<C> for MonoToStereoNode {
         _max_block_frames: usize,
         _num_inputs: usize,
         _num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn std::error::Error>> {
+    ) -> Result<Box<dyn AudioNodeProcessor>, Box<dyn std::error::Error>> {
         Ok(Box::new(MonoToStereoProcessor))
     }
 }
 
 struct MonoToStereoProcessor;
 
-impl<C> AudioNodeProcessor<C> for MonoToStereoProcessor {
+impl AudioNodeProcessor for MonoToStereoProcessor {
     fn process(
         &mut self,
         frames: usize,
         inputs: &[&[f32]],
         outputs: &mut [&mut [f32]],
-        proc_info: ProcInfo<C>,
+        proc_info: ProcInfo,
     ) {
         if proc_info.in_silence_mask.is_channel_silent(0) {
             firewheel_core::util::clear_all_outputs(frames, outputs, proc_info.out_silence_mask);
@@ -48,8 +48,8 @@ impl<C> AudioNodeProcessor<C> for MonoToStereoProcessor {
     }
 }
 
-impl<C> Into<Box<dyn AudioNode<C>>> for MonoToStereoNode {
-    fn into(self) -> Box<dyn AudioNode<C>> {
+impl Into<Box<dyn AudioNode>> for MonoToStereoNode {
+    fn into(self) -> Box<dyn AudioNode> {
         Box::new(self)
     }
 }

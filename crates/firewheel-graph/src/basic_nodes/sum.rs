@@ -2,7 +2,7 @@ use firewheel_core::node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInf
 
 pub struct SumNode;
 
-impl<C> AudioNode<C> for SumNode {
+impl AudioNode for SumNode {
     fn debug_name(&self) -> &'static str {
         "sum"
     }
@@ -22,7 +22,7 @@ impl<C> AudioNode<C> for SumNode {
         _max_block_frames: usize,
         num_inputs: usize,
         num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn std::error::Error>> {
+    ) -> Result<Box<dyn AudioNodeProcessor>, Box<dyn std::error::Error>> {
         if num_inputs % num_outputs != 0 {
             return Err(format!("The number of inputs on a SumNode must be a multiple of the number of outputs. Got num_inputs: {}, num_outputs: {}", num_inputs, num_outputs).into());
         }
@@ -37,13 +37,13 @@ struct SumNodeProcessor {
     num_in_ports: usize,
 }
 
-impl<C> AudioNodeProcessor<C> for SumNodeProcessor {
+impl AudioNodeProcessor for SumNodeProcessor {
     fn process(
         &mut self,
         frames: usize,
         inputs: &[&[f32]],
         outputs: &mut [&mut [f32]],
-        proc_info: ProcInfo<C>,
+        proc_info: ProcInfo,
     ) {
         let num_inputs = inputs.len();
         let num_outputs = outputs.len();
@@ -134,8 +134,8 @@ impl<C> AudioNodeProcessor<C> for SumNodeProcessor {
     }
 }
 
-impl<C> Into<Box<dyn AudioNode<C>>> for SumNode {
-    fn into(self) -> Box<dyn AudioNode<C>> {
+impl Into<Box<dyn AudioNode>> for SumNode {
+    fn into(self) -> Box<dyn AudioNode> {
         Box::new(self)
     }
 }

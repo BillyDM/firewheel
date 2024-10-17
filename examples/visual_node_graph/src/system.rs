@@ -5,7 +5,7 @@ use firewheel::{
     },
     graph::{AddEdgeError, AudioGraph, NodeID},
     node::AudioNode,
-    UpdateStatus,
+    FirewheelCtx, UpdateStatus,
 };
 
 use crate::ui::GuiAudioNode;
@@ -24,45 +24,43 @@ pub enum NodeType {
 }
 
 pub struct AudioSystem {
-    cx: Option<firewheel::ActiveCtx>,
+    cx: FirewheelCtx,
 }
 
 impl AudioSystem {
     pub fn new() -> Self {
-        let cx = firewheel::InactiveCtx::new(Default::default());
+        let mut cx = FirewheelCtx::new(Default::default());
+        cx.activate(None, true, None).unwrap();
 
-        Self {
-            cx: Some(cx.activate(None, true, ()).unwrap()),
-        }
+        Self { cx }
     }
 
-    fn graph(&self) -> &AudioGraph<()> {
-        self.cx.as_ref().unwrap().graph()
+    fn graph(&self) -> &AudioGraph {
+        self.cx.graph()
     }
 
-    fn graph_mut(&mut self) -> &mut AudioGraph<()> {
-        self.cx.as_mut().unwrap().graph_mut()
+    fn graph_mut(&mut self) -> &mut AudioGraph {
+        self.cx.graph_mut()
     }
 
     pub fn remove_node(&mut self, node_id: NodeID) {
-        if let Err(_) = self.cx.as_mut().unwrap().graph_mut().remove_node(node_id) {
+        if let Err(_) = self.cx.graph_mut().remove_node(node_id) {
             log::error!("Node already removed!");
         }
     }
 
     pub fn add_node(&mut self, node_type: NodeType) -> GuiAudioNode {
-        let (node, num_inputs, num_outputs): (Box<dyn AudioNode<()>>, usize, usize) =
-            match node_type {
-                NodeType::BeepTest => (Box::new(BeepTestNode::new(440.0, -12.0, true)), 0, 1),
-                NodeType::HardClip => (Box::new(HardClipNode::new(0.0)), 2, 2),
-                NodeType::MonoToStereo => (Box::new(MonoToStereoNode), 1, 2),
-                NodeType::StereoToMono => (Box::new(StereoToMonoNode), 2, 1),
-                NodeType::SumMono4Ins => (Box::new(SumNode), 4, 1),
-                NodeType::SumStereo2Ins => (Box::new(SumNode), 4, 2),
-                NodeType::SumStereo4Ins => (Box::new(SumNode), 8, 2),
-                NodeType::VolumeMono => (Box::new(VolumeNode::new(100.0)), 1, 1),
-                NodeType::VolumeStereo => (Box::new(VolumeNode::new(100.0)), 2, 2),
-            };
+        let (node, num_inputs, num_outputs): (Box<dyn AudioNode>, usize, usize) = match node_type {
+            NodeType::BeepTest => (Box::new(BeepTestNode::new(440.0, -12.0, true)), 0, 1),
+            NodeType::HardClip => (Box::new(HardClipNode::new(0.0)), 2, 2),
+            NodeType::MonoToStereo => (Box::new(MonoToStereoNode), 1, 2),
+            NodeType::StereoToMono => (Box::new(StereoToMonoNode), 2, 1),
+            NodeType::SumMono4Ins => (Box::new(SumNode), 4, 1),
+            NodeType::SumStereo2Ins => (Box::new(SumNode), 4, 2),
+            NodeType::SumStereo4Ins => (Box::new(SumNode), 8, 2),
+            NodeType::VolumeMono => (Box::new(VolumeNode::new(100.0)), 1, 1),
+            NodeType::VolumeStereo => (Box::new(VolumeNode::new(100.0)), 2, 2),
+        };
 
         let id = self.graph_mut().add_node(num_inputs, num_outputs, node);
 
@@ -111,25 +109,24 @@ impl AudioSystem {
         self.graph().graph_out_node()
     }
 
-    pub fn update(&mut self) -> bool {
-        match self.cx.take().unwrap().update() {
-            UpdateStatus::Ok { cx, graph_error } => {
-                self.cx = Some(cx);
+    pub fn is_activated(&self) -> bool {
+        self.cx.is_activated()
+    }
 
+    pub fn update(&mut self) {
+        match self.cx.update() {
+            UpdateStatus::Inactive => {}
+            UpdateStatus::Active { graph_error } => {
                 if let Some(e) = graph_error {
-                    log::error!("{}", e);
+                    log::error!("audio graph error: {}", e);
                 }
-
-                false
             }
-            UpdateStatus::Deactivated {
-                cx: _,
-                user_cx: _,
-                error_msg,
-            } => {
-                // TODO: Attempt to reconnect.
-                log::error!("Stream disconnected: {:?}", error_msg);
-                true
+            UpdateStatus::Deactivated { error, .. } => {
+                if let Some(e) = error {
+                    log::error!("Stream disconnected: {}", e);
+                } else {
+                    log::error!("Stream disconnected");
+                }
             }
         }
     }

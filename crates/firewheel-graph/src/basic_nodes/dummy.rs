@@ -4,7 +4,7 @@ use firewheel_core::node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInf
 
 pub struct DummyAudioNode;
 
-impl<C> AudioNode<C> for DummyAudioNode {
+impl AudioNode for DummyAudioNode {
     fn debug_name(&self) -> &'static str {
         "dummy"
     }
@@ -24,26 +24,26 @@ impl<C> AudioNode<C> for DummyAudioNode {
         _max_block_frames: usize,
         _num_inputs: usize,
         _num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn Error>> {
+    ) -> Result<Box<dyn AudioNodeProcessor>, Box<dyn Error>> {
         Ok(Box::new(DummyAudioNodeProcessor))
     }
 }
 
 pub struct DummyAudioNodeProcessor;
 
-impl<C> AudioNodeProcessor<C> for DummyAudioNodeProcessor {
+impl AudioNodeProcessor for DummyAudioNodeProcessor {
     fn process(
         &mut self,
         _frames: usize,
         _inputs: &[&[f32]],
         _outputs: &mut [&mut [f32]],
-        _proc_info: ProcInfo<C>,
+        _proc_info: ProcInfo,
     ) {
     }
 }
 
-impl<C> Into<Box<dyn AudioNode<C>>> for DummyAudioNode {
-    fn into(self) -> Box<dyn AudioNode<C>> {
+impl Into<Box<dyn AudioNode>> for DummyAudioNode {
+    fn into(self) -> Box<dyn AudioNode> {
         Box::new(self)
     }
 }

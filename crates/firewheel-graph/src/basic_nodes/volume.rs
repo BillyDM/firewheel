@@ -38,7 +38,7 @@ impl VolumeNode {
     }
 }
 
-impl<C> AudioNode<C> for VolumeNode {
+impl AudioNode for VolumeNode {
     fn debug_name(&self) -> &'static str {
         "volume"
     }
@@ -58,7 +58,7 @@ impl<C> AudioNode<C> for VolumeNode {
         max_block_frames: usize,
         num_inputs: usize,
         num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn std::error::Error>> {
+    ) -> Result<Box<dyn AudioNodeProcessor>, Box<dyn std::error::Error>> {
         if num_inputs != num_outputs {
             return Err(format!("The number of inputs on a VolumeNode node must equal the number of outputs. Got num_inputs: {}, num_outputs: {}", num_inputs, num_outputs).into());
         }
@@ -80,13 +80,13 @@ struct VolumeProcessor {
     gain_smoother: ParamSmoother,
 }
 
-impl<C> AudioNodeProcessor<C> for VolumeProcessor {
+impl AudioNodeProcessor for VolumeProcessor {
     fn process(
         &mut self,
         frames: usize,
         inputs: &[&[f32]],
         outputs: &mut [&mut [f32]],
-        proc_info: ProcInfo<C>,
+        proc_info: ProcInfo,
     ) {
         let raw_gain = self.raw_gain.load(Ordering::Relaxed);
 
@@ -143,8 +143,8 @@ impl<C> AudioNodeProcessor<C> for VolumeProcessor {
     }
 }
 
-impl<C> Into<Box<dyn AudioNode<C>>> for VolumeNode {
-    fn into(self) -> Box<dyn AudioNode<C>> {
+impl Into<Box<dyn AudioNode>> for VolumeNode {
+    fn into(self) -> Box<dyn AudioNode> {
         Box::new(self)
     }
 }

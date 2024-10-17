@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use firewheel::{basic_nodes::beep_test::BeepTestNode, InactiveCtx, UpdateStatus};
+use firewheel::{basic_nodes::beep_test::BeepTestNode, FirewheelCtx, UpdateStatus};
 
 const BEEP_FREQUENCY_HZ: f32 = 440.0;
 const BEEP_GAIN_DB: f32 = -12.0;
@@ -12,7 +12,7 @@ fn main() {
 
     println!("Firewheel beep test...");
 
-    let mut cx = InactiveCtx::new(Default::default());
+    let mut cx = FirewheelCtx::new(Default::default());
 
     let graph = cx.graph_mut();
     let beep_test_node = graph.add_node(
@@ -27,22 +27,21 @@ fn main() {
         .connect(beep_test_node, 1, graph.graph_out_node(), 1, false)
         .unwrap();
 
-    let mut active_cx = Some(cx.activate(None, true, ()).unwrap());
+    cx.activate(None, true, None).unwrap();
 
     let start = Instant::now();
     while start.elapsed() < BEEP_DURATION {
         std::thread::sleep(UPDATE_INTERVAL);
 
-        match active_cx.take().unwrap().update() {
-            UpdateStatus::Ok { cx, graph_error } => {
-                active_cx = Some(cx);
-
+        match cx.update() {
+            UpdateStatus::Inactive => {}
+            UpdateStatus::Active { graph_error } => {
                 if let Some(e) = graph_error {
-                    log::error!("{}", e);
+                    log::error!("graph error: {}", e);
                 }
             }
-            UpdateStatus::Deactivated { error_msg, .. } => {
-                log::error!("Deactivated unexpectedly: {:?}", error_msg);
+            UpdateStatus::Deactivated { error, .. } => {
+                log::error!("Deactivated unexpectedly: {:?}", error);
 
                 break;
             }

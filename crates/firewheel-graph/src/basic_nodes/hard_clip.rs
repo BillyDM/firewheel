@@ -12,7 +12,7 @@ impl HardClipNode {
     }
 }
 
-impl<C> AudioNode<C> for HardClipNode {
+impl AudioNode for HardClipNode {
     fn debug_name(&self) -> &'static str {
         "hard_clip"
     }
@@ -32,7 +32,7 @@ impl<C> AudioNode<C> for HardClipNode {
         _max_block_frames: usize,
         num_inputs: usize,
         num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn std::error::Error>> {
+    ) -> Result<Box<dyn AudioNodeProcessor>, Box<dyn std::error::Error>> {
         if num_inputs != num_outputs {
             return Err(format!("The number of inputs on a HardClip node must equal the number of outputs. Got num_inputs: {}, num_outputs: {}", num_inputs, num_outputs).into());
         }
@@ -47,13 +47,13 @@ struct HardClipProcessor {
     threshold_gain: f32,
 }
 
-impl<C> AudioNodeProcessor<C> for HardClipProcessor {
+impl AudioNodeProcessor for HardClipProcessor {
     fn process(
         &mut self,
         frames: usize,
         inputs: &[&[f32]],
         outputs: &mut [&mut [f32]],
-        proc_info: ProcInfo<C>,
+        proc_info: ProcInfo,
     ) {
         // Provide an optimized loop for stereo.
         if inputs.len() == 2
@@ -93,8 +93,8 @@ impl<C> AudioNodeProcessor<C> for HardClipProcessor {
     }
 }
 
-impl<C> Into<Box<dyn AudioNode<C>>> for HardClipNode {
-    fn into(self) -> Box<dyn AudioNode<C>> {
+impl Into<Box<dyn AudioNode>> for HardClipNode {
+    fn into(self) -> Box<dyn AudioNode> {
         Box::new(self)
     }
 }

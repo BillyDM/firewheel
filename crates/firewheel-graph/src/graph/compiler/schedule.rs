@@ -125,18 +125,18 @@ pub(super) struct OutBufferAssignment {
     pub generation: usize,
 }
 
-pub struct ScheduleHeapData<C> {
+pub struct ScheduleHeapData {
     pub schedule: CompiledSchedule,
     pub nodes_to_remove: Vec<NodeID>,
-    pub removed_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor<C>>)>,
-    pub new_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor<C>>)>,
+    pub removed_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor>)>,
+    pub new_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor>)>,
 }
 
-impl<C> ScheduleHeapData<C> {
+impl ScheduleHeapData {
     pub fn new(
         schedule: CompiledSchedule,
         nodes_to_remove: Vec<NodeID>,
-        new_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor<C>>)>,
+        new_node_processors: Vec<(NodeID, Box<dyn AudioNodeProcessor>)>,
     ) -> Self {
         let num_nodes_to_remove = nodes_to_remove.len();
 
@@ -149,7 +149,7 @@ impl<C> ScheduleHeapData<C> {
     }
 }
 
-impl<C> Debug for ScheduleHeapData<C> {
+impl Debug for ScheduleHeapData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let new_node_processors: Vec<NodeID> =
             self.new_node_processors.iter().map(|(id, _)| *id).collect();
@@ -601,7 +601,7 @@ mod tests {
         node_id: NodeID,
         in_ports_that_should_clear: &[bool],
         schedule: &CompiledSchedule,
-        graph: &AudioGraph<()>,
+        graph: &AudioGraph,
     ) {
         let node = graph.node_info(node_id).unwrap();
         let scheduled_node = schedule.schedule.iter().find(|&s| s.id == node_id).unwrap();
@@ -634,7 +634,7 @@ mod tests {
         }
     }
 
-    fn verify_edge(edge_id: EdgeID, graph: &AudioGraph<()>, schedule: &CompiledSchedule) {
+    fn verify_edge(edge_id: EdgeID, graph: &AudioGraph, schedule: &CompiledSchedule) {
         let edge = graph.edge(edge_id).unwrap();
 
         let mut src_buffer_idx = None;
@@ -661,7 +661,7 @@ mod tests {
 
     #[test]
     fn many_to_one_detection() {
-        let mut graph = AudioGraph::<()>::new(&AudioGraphConfig {
+        let mut graph = AudioGraph::new(&AudioGraphConfig {
             num_graph_inputs: 2,
             num_graph_outputs: 1,
             ..Default::default()
@@ -684,7 +684,7 @@ mod tests {
 
     #[test]
     fn cycle_detection() {
-        let mut graph = AudioGraph::<()>::new(&AudioGraphConfig {
+        let mut graph = AudioGraph::new(&AudioGraphConfig {
             num_graph_inputs: 0,
             num_graph_outputs: 2,
             ..Default::default()

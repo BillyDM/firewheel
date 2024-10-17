@@ -1,9 +1,9 @@
 use downcast_rs::Downcast;
-use std::error::Error;
+use std::{any::Any, error::Error};
 
 use crate::SilenceMask;
 
-pub trait AudioNode<C>: 'static + Downcast {
+pub trait AudioNode: 'static + Downcast {
     fn debug_name(&self) -> &'static str;
 
     fn info(&self) -> AudioNodeInfo;
@@ -15,7 +15,7 @@ pub trait AudioNode<C>: 'static + Downcast {
         max_block_frames: usize,
         num_inputs: usize,
         num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn Error>>;
+    ) -> Result<Box<dyn AudioNodeProcessor>, Box<dyn Error>>;
 
     /// Called when the processor counterpart has been deactivated
     /// and dropped.
@@ -23,12 +23,12 @@ pub trait AudioNode<C>: 'static + Downcast {
     /// If the audio graph counterpart has gracefully shut down, then
     /// the processor counterpart is returned.
     #[allow(unused)]
-    fn deactivate(&mut self, processor: Option<Box<dyn AudioNodeProcessor<C>>>) {}
+    fn deactivate(&mut self, processor: Option<Box<dyn AudioNodeProcessor>>) {}
 }
 
-downcast_rs::impl_downcast!(AudioNode<C>);
+downcast_rs::impl_downcast!(AudioNode);
 
-pub trait AudioNodeProcessor<C>: 'static + Send {
+pub trait AudioNodeProcessor: 'static + Send {
     /// Process the given block of audio. Only process data in the
     /// buffers up to `frames`.
     ///
@@ -42,7 +42,7 @@ pub trait AudioNodeProcessor<C>: 'static + Send {
         frames: usize,
         inputs: &[&[f32]],
         outputs: &mut [&mut [f32]],
-        proc_info: ProcInfo<C>,
+        proc_info: ProcInfo,
     );
 }
 
@@ -65,7 +65,7 @@ pub struct AudioNodeInfo {
 }
 
 /// Additional information for processing audio
-pub struct ProcInfo<'a, C> {
+pub struct ProcInfo<'a> {
     /// An optional optimization hint on which input channels contain
     /// all zeros (silence). The first bit (`0b1`) is the first channel,
     /// the second bit is the second channel, and so on.
@@ -88,7 +88,7 @@ pub struct ProcInfo<'a, C> {
     pub stream_status: StreamStatus,
 
     /// A global user-defined context
-    pub cx: &'a mut C,
+    pub cx: &'a mut Box<dyn Any + Send>,
 }
 
 bitflags::bitflags! {

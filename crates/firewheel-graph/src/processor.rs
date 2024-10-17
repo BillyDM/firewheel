@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use thunderdome::Arena;
 
 use crate::graph::{NodeID, ScheduleHeapData};
@@ -7,36 +9,36 @@ use firewheel_core::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FwProcessorStatus {
+pub enum FirewheelProcessorStatus {
     Ok,
-    /// If this is returned, then the [`FwProcessor`] must be dropped.
+    /// If this is returned, then the [`FirewheelProcessor`] must be dropped.
     DropProcessor,
 }
 
-pub struct FwProcessor<C: 'static> {
-    nodes: Arena<Box<dyn AudioNodeProcessor<C>>>,
-    schedule_data: Option<Box<ScheduleHeapData<C>>>,
-    user_cx: Option<C>,
+pub struct FirewheelProcessor {
+    nodes: Arena<Box<dyn AudioNodeProcessor>>,
+    schedule_data: Option<Box<ScheduleHeapData>>,
+    user_cx: Option<Box<dyn Any + Send>>,
 
     // TODO: Do research on whether `rtrb` is compatible with
     // webassembly. If not, use conditional compilation to
     // use a different channel type when targeting webassembly.
-    from_graph_rx: rtrb::Consumer<ContextToProcessorMsg<C>>,
-    to_graph_tx: rtrb::Producer<ProcessorToContextMsg<C>>,
+    from_graph_rx: rtrb::Consumer<ContextToProcessorMsg>,
+    to_graph_tx: rtrb::Producer<ProcessorToContextMsg>,
 
     running: bool,
     max_block_frames: usize,
 }
 
-impl<C> FwProcessor<C> {
+impl FirewheelProcessor {
     pub(crate) fn new(
-        from_graph_rx: rtrb::Consumer<ContextToProcessorMsg<C>>,
-        to_graph_tx: rtrb::Producer<ProcessorToContextMsg<C>>,
+        from_graph_rx: rtrb::Consumer<ContextToProcessorMsg>,
+        to_graph_tx: rtrb::Producer<ProcessorToContextMsg>,
         node_capacity: usize,
         num_stream_in_channels: usize,
         num_stream_out_channels: usize,
         max_block_frames: usize,
-        user_cx: C,
+        user_cx: Box<dyn Any + Send>,
     ) -> Self {
         assert!(num_stream_in_channels <= 64);
         assert!(num_stream_out_channels <= 64);
@@ -55,7 +57,7 @@ impl<C> FwProcessor<C> {
     /// Process the given buffers of audio data.
     ///
     /// If this returns [`ProcessStatus::DropProcessor`], then this
-    /// [`FwProcessor`] must be dropped.
+    /// [`FirewheelProcessor`] must be dropped.
     pub fn process_interleaved(
         &mut self,
         input: &[f32],
@@ -65,10 +67,10 @@ impl<C> FwProcessor<C> {
         frames: usize,
         stream_time_secs: f64,
         stream_status: StreamStatus,
-    ) -> FwProcessorStatus {
+    ) -> FirewheelProcessorStatus {
         if !self.running {
             output.fill(0.0);
-            return FwProcessorStatus::DropProcessor;
+            return FirewheelProcessorStatus::DropProcessor;
         }
 
         if self.schedule_data.is_none() {
@@ -77,13 +79,13 @@ impl<C> FwProcessor<C> {
 
             if !self.running {
                 output.fill(0.0);
-                return FwProcessorStatus::DropProcessor;
+                return FirewheelProcessorStatus::DropProcessor;
             }
         }
 
         if self.schedule_data.is_none() || frames == 0 {
             output.fill(0.0);
-            return FwProcessorStatus::Ok;
+            return FirewheelProcessorStatus::Ok;
         };
 
         assert_eq!(input.len(), frames * num_in_channels);
@@ -156,9 +158,9 @@ impl<C> FwProcessor<C> {
         }
 
         if self.running {
-            FwProcessorStatus::Ok
+            FirewheelProcessorStatus::Ok
         } else {
-            FwProcessorStatus::DropProcessor
+            FirewheelProcessorStatus::DropProcessor
         }
     }
 
@@ -246,7 +248,7 @@ impl<C> FwProcessor<C> {
     }
 }
 
-impl<C> Drop for FwProcessor<C> {
+impl Drop for FirewheelProcessor {
     fn drop(&mut self) {
         // Make sure the nodes are not deallocated in the audio thread.
         let mut nodes = Arena::new();
@@ -260,16 +262,16 @@ impl<C> Drop for FwProcessor<C> {
     }
 }
 
-pub(crate) enum ContextToProcessorMsg<C> {
-    NewSchedule(Box<ScheduleHeapData<C>>),
+pub(crate) enum ContextToProcessorMsg {
+    NewSchedule(Box<ScheduleHeapData>),
     Stop,
 }
 
-pub(crate) enum ProcessorToContextMsg<C> {
-    ReturnSchedule(Box<ScheduleHeapData<C>>),
+pub(crate) enum ProcessorToContextMsg {
+    ReturnSchedule(Box<ScheduleHeapData>),
     Dropped {
-        nodes: Arena<Box<dyn AudioNodeProcessor<C>>>,
-        _schedule_data: Option<Box<ScheduleHeapData<C>>>,
-        user_cx: Option<C>,
+        nodes: Arena<Box<dyn AudioNodeProcessor>>,
+        _schedule_data: Option<Box<ScheduleHeapData>>,
+        user_cx: Option<Box<dyn Any + Send>>,
     },
 }

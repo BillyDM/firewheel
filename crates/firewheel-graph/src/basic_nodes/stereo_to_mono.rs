@@ -2,7 +2,7 @@ use firewheel_core::node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInf
 
 pub struct StereoToMonoNode;
 
-impl<C> AudioNode<C> for StereoToMonoNode {
+impl AudioNode for StereoToMonoNode {
     fn debug_name(&self) -> &'static str {
         "stereo_to_mono"
     }
@@ -22,20 +22,20 @@ impl<C> AudioNode<C> for StereoToMonoNode {
         _max_block_frames: usize,
         _num_inputs: usize,
         _num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn std::error::Error>> {
+    ) -> Result<Box<dyn AudioNodeProcessor>, Box<dyn std::error::Error>> {
         Ok(Box::new(StereoToMonoProcessor))
     }
 }
 
 struct StereoToMonoProcessor;
 
-impl<C> AudioNodeProcessor<C> for StereoToMonoProcessor {
+impl AudioNodeProcessor for StereoToMonoProcessor {
     fn process(
         &mut self,
         frames: usize,
         inputs: &[&[f32]],
         outputs: &mut [&mut [f32]],
-        proc_info: ProcInfo<C>,
+        proc_info: ProcInfo,
     ) {
         if proc_info.in_silence_mask.all_channels_silent(2)
             || inputs.len() < 2
@@ -54,8 +54,8 @@ impl<C> AudioNodeProcessor<C> for StereoToMonoProcessor {
     }
 }
 
-impl<C> Into<Box<dyn AudioNode<C>>> for StereoToMonoNode {
-    fn into(self) -> Box<dyn AudioNode<C>> {
+impl Into<Box<dyn AudioNode>> for StereoToMonoNode {
+    fn into(self) -> Box<dyn AudioNode> {
         Box::new(self)
     }
 }

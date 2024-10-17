@@ -32,7 +32,7 @@ impl BeepTestNode {
     }
 }
 
-impl<C> AudioNode<C> for BeepTestNode {
+impl AudioNode for BeepTestNode {
     fn debug_name(&self) -> &'static str {
         "beep_test"
     }
@@ -52,7 +52,7 @@ impl<C> AudioNode<C> for BeepTestNode {
         _max_block_frames: usize,
         _num_inputs: usize,
         _num_outputs: usize,
-    ) -> Result<Box<dyn AudioNodeProcessor<C>>, Box<dyn std::error::Error>> {
+    ) -> Result<Box<dyn AudioNodeProcessor>, Box<dyn std::error::Error>> {
         Ok(Box::new(BeepTestProcessor {
             enabled: Arc::clone(&self.enabled),
             phasor: 0.0,
@@ -69,13 +69,13 @@ struct BeepTestProcessor {
     gain: f32,
 }
 
-impl<C> AudioNodeProcessor<C> for BeepTestProcessor {
+impl AudioNodeProcessor for BeepTestProcessor {
     fn process(
         &mut self,
         frames: usize,
         _inputs: &[&[f32]],
         outputs: &mut [&mut [f32]],
-        proc_info: ProcInfo<C>,
+        proc_info: ProcInfo,
     ) {
         let Some((out1, outputs)) = outputs.split_first_mut() else {
             return;
@@ -97,8 +97,8 @@ impl<C> AudioNodeProcessor<C> for BeepTestProcessor {
     }
 }
 
-impl<C> Into<Box<dyn AudioNode<C>>> for BeepTestNode {
-    fn into(self) -> Box<dyn AudioNode<C>> {
+impl Into<Box<dyn AudioNode>> for BeepTestNode {
+    fn into(self) -> Box<dyn AudioNode> {
         Box::new(self)
     }
 }

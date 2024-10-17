@@ -1,49 +1,76 @@
-use std::time::{Duration, Instant};
+use std::{
+    any::Any,
+    error::Error,
+    time::{Duration, Instant},
+};
 
 use rtrb::PushError;
 
 use crate::{
     graph::{AudioGraph, AudioGraphConfig, CompileGraphError},
-    processor::{ContextToProcessorMsg, FwProcessor, ProcessorToContextMsg},
+    processor::{ContextToProcessorMsg, FirewheelProcessor, ProcessorToContextMsg},
 };
 
 const CHANNEL_CAPACITY: usize = 16;
 const CLOSE_STREAM_TIMEOUT: Duration = Duration::from_secs(3);
 const CLOSE_STREAM_SLEEP_INTERVAL: Duration = Duration::from_millis(2);
 
-pub struct InactiveFwCtx<C> {
-    graph: AudioGraph<C>,
+struct ActiveState {
+    // TODO: Do research on whether `rtrb` is compatible with
+    // webassembly. If not, use conditional compilation to
+    // use a different channel type when targeting webassembly.
+    to_executor_tx: rtrb::Producer<ContextToProcessorMsg>,
+    from_executor_rx: rtrb::Consumer<ProcessorToContextMsg>,
+
+    sample_rate: u32,
+    max_block_frames: usize,
 }
 
-impl<C: 'static> InactiveFwCtx<C> {
+pub struct FirewheelGraphCtx {
+    pub graph: AudioGraph,
+
+    active_state: Option<ActiveState>,
+}
+
+impl FirewheelGraphCtx {
     pub fn new(graph_config: AudioGraphConfig) -> Self {
         Self {
             graph: AudioGraph::new(&graph_config),
+            active_state: None,
         }
     }
 
-    pub fn graph(&self) -> &AudioGraph<C> {
-        &self.graph
-    }
-
-    pub fn graph_mut(&mut self) -> &mut AudioGraph<C> {
-        &mut self.graph
-    }
-
+    /// Activate the context and return the processor to send to the audio thread.
+    ///
+    /// Returns `None` if the context is already active.
     pub fn activate(
-        self,
+        &mut self,
         sample_rate: u32,
         num_stream_in_channels: usize,
         num_stream_out_channels: usize,
         max_block_frames: usize,
-        user_cx: C,
-    ) -> (ActiveFwCtx<C>, FwProcessor<C>) {
-        let (to_executor_tx, from_graph_rx) =
-            rtrb::RingBuffer::<ContextToProcessorMsg<C>>::new(CHANNEL_CAPACITY);
-        let (to_graph_tx, from_executor_rx) =
-            rtrb::RingBuffer::<ProcessorToContextMsg<C>>::new(CHANNEL_CAPACITY);
+        user_cx: Box<dyn Any + Send>,
+    ) -> Option<FirewheelProcessor> {
+        assert_ne!(sample_rate, 0);
+        assert!(max_block_frames > 0);
 
-        let processor = FwProcessor::new(
+        if self.active_state.is_some() {
+            return None;
+        }
+
+        let (to_executor_tx, from_graph_rx) =
+            rtrb::RingBuffer::<ContextToProcessorMsg>::new(CHANNEL_CAPACITY);
+        let (to_graph_tx, from_executor_rx) =
+            rtrb::RingBuffer::<ProcessorToContextMsg>::new(CHANNEL_CAPACITY);
+
+        self.active_state = Some(ActiveState {
+            to_executor_tx,
+            from_executor_rx,
+            sample_rate,
+            max_block_frames,
+        });
+
+        Some(FirewheelProcessor::new(
             from_graph_rx,
             to_graph_tx,
             self.graph.current_node_capacity(),
@@ -51,41 +78,23 @@ impl<C: 'static> InactiveFwCtx<C> {
             num_stream_out_channels,
             max_block_frames,
             user_cx,
-        );
-
-        (
-            ActiveFwCtx {
-                inner: Some(ActiveFwCtxInner {
-                    graph: self.graph,
-                    to_executor_tx,
-                    from_executor_rx,
-                    sample_rate,
-                    max_block_frames,
-                }),
-            },
-            processor,
-        )
+        ))
     }
-}
 
-struct ActiveFwCtxInner<C> {
-    pub graph: AudioGraph<C>,
+    /// Returns whether or not this context is currently activated.
+    pub fn is_activated(&self) -> bool {
+        self.active_state.is_some()
+    }
 
-    // TODO: Do research on whether `rtrb` is compatible with
-    // webassembly. If not, use conditional compilation to
-    // use a different channel type when targeting webassembly.
-    to_executor_tx: rtrb::Producer<ContextToProcessorMsg<C>>,
-    from_executor_rx: rtrb::Consumer<ProcessorToContextMsg<C>>,
-
-    sample_rate: u32,
-    max_block_frames: usize,
-}
-
-impl<C: 'static> ActiveFwCtxInner<C> {
     /// Update the firewheel context.
     ///
-    /// This must be called reguarly (i.e. once every frame).
-    fn update(&mut self) -> UpdateStatusInternal<C> {
+    /// This must be called reguarly once the context has been activated
+    /// (i.e. once every frame).
+    pub fn update(&mut self) -> UpdateStatus {
+        if self.active_state.is_none() {
+            return UpdateStatus::Inactive;
+        }
+
         let mut dropped = false;
         let mut dropped_user_cx = None;
 
@@ -93,13 +102,24 @@ impl<C: 'static> ActiveFwCtxInner<C> {
 
         if dropped {
             self.graph.deactivate();
-            return UpdateStatusInternal::Deactivated(dropped_user_cx);
+            self.active_state = None;
+            return UpdateStatus::Deactivated {
+                returned_user_cx: dropped_user_cx,
+                error: None,
+            };
         }
 
+        let Some(state) = &mut self.active_state else {
+            return UpdateStatus::Inactive;
+        };
+
         if self.graph.needs_compile() {
-            match self.graph.compile(self.sample_rate, self.max_block_frames) {
+            match self
+                .graph
+                .compile(state.sample_rate, state.max_block_frames)
+            {
                 Ok(schedule_data) => {
-                    if let Err(e) = self
+                    if let Err(e) = state
                         .to_executor_tx
                         .push(ContextToProcessorMsg::NewSchedule(Box::new(schedule_data)))
                     {
@@ -115,12 +135,14 @@ impl<C: 'static> ActiveFwCtxInner<C> {
                     }
                 }
                 Err(e) => {
-                    return UpdateStatusInternal::GraphError(e);
+                    return UpdateStatus::Active {
+                        graph_error: Some(e),
+                    };
                 }
             }
         }
 
-        UpdateStatusInternal::Ok
+        UpdateStatus::Active { graph_error: None }
     }
 
     /// Deactivate the firewheel context.
@@ -132,7 +154,14 @@ impl<C: 'static> ActiveFwCtxInner<C> {
     /// will attempt to cleanly deactivate the processor. If not,
     /// then the context will wait for either the processor to be
     /// dropped or a timeout being reached.
-    fn deactivate(mut self, stream_is_running: bool) -> (InactiveFwCtx<C>, Option<C>) {
+    ///
+    /// If the context is already deactivated, then this will do
+    /// nothing and return `None`.
+    pub fn deactivate(&mut self, stream_is_running: bool) -> Option<Box<dyn Any + Send>> {
+        let Some(state) = &mut self.active_state else {
+            return None;
+        };
+
         let start = Instant::now();
 
         let mut dropped = false;
@@ -140,7 +169,7 @@ impl<C: 'static> ActiveFwCtxInner<C> {
 
         if stream_is_running {
             loop {
-                if let Err(_) = self.to_executor_tx.push(ContextToProcessorMsg::Stop) {
+                if let Err(_) = state.to_executor_tx.push(ContextToProcessorMsg::Stop) {
                     log::error!("Failed to send stop signal: Firewheel message channel is full");
 
                     // TODO: I don't think sleep is supported in WASM, so we will
@@ -174,12 +203,21 @@ impl<C: 'static> ActiveFwCtxInner<C> {
         }
 
         self.graph.deactivate();
+        self.active_state = None;
 
-        (InactiveFwCtx { graph: self.graph }, dropped_user_cx)
+        dropped_user_cx
     }
 
-    fn update_internal(&mut self, dropped: &mut bool, dropped_user_cx: &mut Option<C>) {
-        while let Ok(msg) = self.from_executor_rx.pop() {
+    fn update_internal(
+        &mut self,
+        dropped: &mut bool,
+        dropped_user_cx: &mut Option<Box<dyn Any + Send>>,
+    ) {
+        let Some(state) = &mut self.active_state else {
+            return;
+        };
+
+        while let Ok(msg) = state.from_executor_rx.pop() {
             match msg {
                 ProcessorToContextMsg::ReturnSchedule(schedule_data) => {
                     self.graph.on_schedule_returned(schedule_data);
@@ -194,88 +232,21 @@ impl<C: 'static> ActiveFwCtxInner<C> {
     }
 }
 
-pub struct ActiveFwCtx<C: 'static> {
-    inner: Option<ActiveFwCtxInner<C>>,
-}
-
-impl<C: 'static> ActiveFwCtx<C> {
-    pub fn graph(&self) -> &AudioGraph<C> {
-        &self.inner.as_ref().unwrap().graph
-    }
-
-    pub fn graph_mut(&mut self) -> &mut AudioGraph<C> {
-        &mut self.inner.as_mut().unwrap().graph
-    }
-
-    /// Update the firewheel context.
-    ///
-    /// This must be called reguarly (i.e. once every frame).
-    pub fn update(mut self) -> UpdateStatus<C> {
-        match self.inner.as_mut().unwrap().update() {
-            UpdateStatusInternal::Ok => UpdateStatus::Ok {
-                cx: self,
-                graph_error: None,
-            },
-            UpdateStatusInternal::GraphError(e) => UpdateStatus::Ok {
-                cx: self,
-                graph_error: Some(e),
-            },
-            UpdateStatusInternal::Deactivated(user_cx) => UpdateStatus::Deactivated {
-                cx: InactiveFwCtx {
-                    graph: self.inner.take().unwrap().graph,
-                },
-                user_cx,
-            },
-        }
-    }
-
-    /// Deactivate the firewheel context.
-    ///
-    /// This will block the thread until either the processor has
-    /// been successfully dropped or a timeout has been reached.
-    ///
-    /// If the stream is still currently running, then the context
-    /// will attempt to cleanly deactivate the processor. If not,
-    /// then the context will wait for either the processor to be
-    /// dropped or a timeout being reached.
-    pub fn deactivate(mut self, stream_is_running: bool) -> (InactiveFwCtx<C>, Option<C>) {
-        let inner = self.inner.take().unwrap();
-        inner.deactivate(stream_is_running)
-    }
-}
-
-impl<C: 'static> Drop for ActiveFwCtx<C> {
+impl Drop for FirewheelGraphCtx {
     fn drop(&mut self) {
-        if let Some(inner) = self.inner.take() {
-            inner.deactivate(true);
+        if self.is_activated() {
+            self.deactivate(true);
         }
     }
 }
 
-pub enum FwCtx<C: 'static> {
-    Inactive(InactiveFwCtx<C>),
-    Active(ActiveFwCtx<C>),
-}
-
-impl<C: 'static> FwCtx<C> {
-    pub fn new(graph_config: AudioGraphConfig) -> Self {
-        Self::Inactive(InactiveFwCtx::new(graph_config))
-    }
-}
-
-pub enum UpdateStatus<C: 'static> {
-    Ok {
-        cx: ActiveFwCtx<C>,
+pub enum UpdateStatus {
+    Inactive,
+    Active {
         graph_error: Option<CompileGraphError>,
     },
     Deactivated {
-        cx: InactiveFwCtx<C>,
-        user_cx: Option<C>,
+        error: Option<Box<dyn Error>>,
+        returned_user_cx: Option<Box<dyn Any + Send>>,
     },
-}
-
-enum UpdateStatusInternal<C> {
-    Ok,
-    GraphError(CompileGraphError),
-    Deactivated(Option<C>),
 }
