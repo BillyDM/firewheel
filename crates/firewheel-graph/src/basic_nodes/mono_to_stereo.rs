@@ -13,6 +13,7 @@ impl AudioNode for MonoToStereoNode {
             num_max_supported_inputs: 1,
             num_min_supported_outputs: 2,
             num_max_supported_outputs: 2,
+            updates: false,
         }
     }
 

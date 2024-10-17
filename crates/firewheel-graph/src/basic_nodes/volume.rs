@@ -49,6 +49,7 @@ impl AudioNode for VolumeNode {
             num_max_supported_inputs: 64,
             num_min_supported_outputs: 1,
             num_max_supported_outputs: 64,
+            updates: false,
         }
     }
 

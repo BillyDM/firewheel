@@ -76,6 +76,7 @@ impl Debug for NodeID {
 pub struct NodeWeight {
     pub node: Box<dyn AudioNode>,
     pub activated: bool,
+    pub updates: bool,
 }
 
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
@@ -131,6 +132,7 @@ impl AudioGraph {
                 NodeWeight {
                     node: Box::new(DummyAudioNode),
                     activated: false,
+                    updates: false,
                 },
             )),
             debug_name: "graph_in",
@@ -144,6 +146,7 @@ impl AudioGraph {
                 NodeWeight {
                     node: Box::new(DummyAudioNode),
                     activated: false,
+                    updates: false,
                 },
             )),
             debug_name: "graph_out",
@@ -204,13 +207,16 @@ impl AudioGraph {
         let node: Box<dyn AudioNode> = node.into();
         let debug_name = node.debug_name();
 
+        let info = node.info();
+
         let new_id = NodeID {
             idx: self.nodes.insert(NodeEntry::new(
                 num_inputs,
                 num_outputs,
                 NodeWeight {
-                    node: node.into(),
+                    node,
                     activated: false,
+                    updates: info.updates,
                 },
             )),
             debug_name,
@@ -679,6 +685,14 @@ impl AudioGraph {
                 idx: node_id,
                 debug_name,
             });
+        }
+    }
+
+    pub(crate) fn update(&mut self) {
+        for (_, node_entry) in self.nodes.iter_mut() {
+            if node_entry.weight.updates {
+                node_entry.weight.node.update();
+            }
         }
     }
 }

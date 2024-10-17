@@ -24,6 +24,12 @@ pub trait AudioNode: 'static + Downcast {
     /// the processor counterpart is returned.
     #[allow(unused)]
     fn deactivate(&mut self, processor: Option<Box<dyn AudioNodeProcessor>>) {}
+
+    /// A method that gets called periodically (i.e. once every frame).
+    ///
+    /// This method will only be called if [`AudioNodeInfo::updates`]
+    /// was set to `true`.
+    fn update(&mut self) {}
 }
 
 downcast_rs::impl_downcast!(AudioNode);
@@ -62,6 +68,26 @@ pub struct AudioNodeInfo {
     ///
     /// This value must be less than `64`.
     pub num_max_supported_outputs: u32,
+
+    /// Whether or not to call the `update` method on this node.
+    ///
+    /// If you do not need this, set this to `false` to save
+    /// some performance overhead.
+    ///
+    /// By default this is set to `false`.
+    pub updates: bool,
+}
+
+impl Default for AudioNodeInfo {
+    fn default() -> Self {
+        Self {
+            num_min_supported_inputs: 0,
+            num_max_supported_inputs: 0,
+            num_min_supported_outputs: 0,
+            num_max_supported_outputs: 0,
+            updates: false,
+        }
+    }
 }
 
 /// Additional information for processing audio

@@ -91,6 +91,8 @@ impl FirewheelGraphCtx {
     /// This must be called reguarly once the context has been activated
     /// (i.e. once every frame).
     pub fn update(&mut self) -> UpdateStatus {
+        self.graph.update();
+
         if self.active_state.is_none() {
             return UpdateStatus::Inactive;
         }

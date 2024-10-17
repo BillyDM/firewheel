@@ -39,10 +39,9 @@ impl AudioNode for BeepTestNode {
 
     fn info(&self) -> AudioNodeInfo {
         AudioNodeInfo {
-            num_min_supported_inputs: 0,
-            num_max_supported_inputs: 0,
             num_min_supported_outputs: 1,
             num_max_supported_outputs: 64,
+            ..Default::default()
         }
     }
 
