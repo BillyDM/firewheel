@@ -21,7 +21,6 @@ members = [
     "crates/firewheel-core",
     "crates/firewheel-graph",
     "crates/firewheel-cpal",
-    "crates/firewheel-sampler",
     "examples/beep_test",
     "examples/visual_node_graph",
 ]

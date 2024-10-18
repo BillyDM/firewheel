@@ -2,6 +2,7 @@ pub mod beep_test;
 mod dummy;
 mod hard_clip;
 mod mono_to_stereo;
+pub mod sampler;
 mod stereo_to_mono;
 mod sum;
 mod volume;

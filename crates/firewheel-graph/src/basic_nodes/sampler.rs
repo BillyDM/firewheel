@@ -8,6 +8,7 @@ use atomic_float::AtomicF32;
 use firewheel_core::{
     node::{AudioNode, AudioNodeInfo, AudioNodeProcessor, ProcInfo},
     param::{range::percent_volume_to_raw_gain, smoother::ParamSmoother},
+    sample_resource::SampleResource,
 };
 
 const CHANNEL_CAPACITY: usize = 128;
@@ -17,11 +18,8 @@ pub enum LoopRange {
     RangeSecs(Range<f64>),
 }
 
-enum NodeToProcessorMsg {
-    SetSample {
-        sample: Arc<Vec<Vec<f32>>>,
-        stop_playback: bool,
-    },
+enum NodeToProcessorMsg<S: SampleResource> {
+    SetSample { sample: S, stop_playback: bool },
     Play,
     Pause,
     Stop,
@@ -29,31 +27,31 @@ enum NodeToProcessorMsg {
     SetLoopRange(Option<LoopRange>),
 }
 
-impl Debug for NodeToProcessorMsg {
+impl<S: SampleResource> Debug for NodeToProcessorMsg<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "NodeToProcessorMsg")
     }
 }
 
-enum ProcessorToNodeMsg {
-    ReturnSample(Arc<Vec<Vec<f32>>>),
+enum ProcessorToNodeMsg<S: SampleResource> {
+    ReturnSample(S),
 }
 
-struct ActiveState {
+struct ActiveState<S: SampleResource> {
     // TODO: Find a good solution for webassembly.
-    to_processor_tx: rtrb::Producer<NodeToProcessorMsg>,
-    from_processor_rx: rtrb::Consumer<ProcessorToNodeMsg>,
+    to_processor_tx: rtrb::Producer<NodeToProcessorMsg<S>>,
+    from_processor_rx: rtrb::Consumer<ProcessorToNodeMsg<S>>,
 }
 
-pub struct SamplerNode {
-    active_state: Option<ActiveState>,
+pub struct SamplerNode<S: SampleResource> {
+    active_state: Option<ActiveState<S>>,
 
     raw_gain: Arc<AtomicF32>,
     percent_volume: f32,
     playing: bool,
 }
 
-impl SamplerNode {
+impl<S: SampleResource> SamplerNode<S> {
     pub fn new(percent_volume: f32) -> Self {
         let percent_volume = percent_volume.max(0.0);
 
@@ -66,11 +64,7 @@ impl SamplerNode {
     }
 
     // TODO: Error type
-    pub fn set_sample(
-        &mut self,
-        sample: Arc<Vec<Vec<f32>>>,
-        stop_playback: bool,
-    ) -> Result<(), ()> {
+    pub fn set_sample(&mut self, sample: S, stop_playback: bool) -> Result<(), ()> {
         if let Some(state) = &mut self.active_state {
             state
                 .to_processor_tx
@@ -187,7 +181,7 @@ impl SamplerNode {
     }
 }
 
-impl AudioNode for SamplerNode {
+impl<S: SampleResource> AudioNode for SamplerNode<S> {
     fn debug_name(&self) -> &'static str {
         "beep_test"
     }
@@ -209,9 +203,9 @@ impl AudioNode for SamplerNode {
         _num_outputs: usize,
     ) -> Result<Box<dyn AudioNodeProcessor>, Box<dyn std::error::Error>> {
         let (to_processor_tx, from_node_rx) =
-            rtrb::RingBuffer::<NodeToProcessorMsg>::new(CHANNEL_CAPACITY);
+            rtrb::RingBuffer::<NodeToProcessorMsg<S>>::new(CHANNEL_CAPACITY);
         let (to_node_tx, from_processor_rx) =
-            rtrb::RingBuffer::<ProcessorToNodeMsg>::new(CHANNEL_CAPACITY);
+            rtrb::RingBuffer::<ProcessorToNodeMsg<S>>::new(CHANNEL_CAPACITY);
 
         self.active_state = Some(ActiveState {
             to_processor_tx,
@@ -244,11 +238,11 @@ struct ProcLoopRange {
 }
 
 impl ProcLoopRange {
-    fn new(loop_range: LoopRange, sample_rate: u32, sample: &Option<Arc<Vec<Vec<f32>>>>) -> Self {
+    fn new<S: SampleResource>(loop_range: LoopRange, sample_rate: u32, sample: &Option<S>) -> Self {
         let (start_frame, end_frame, full_range) = match &loop_range {
             LoopRange::Full => {
                 let end_frame = if let Some(sample) = sample {
-                    sample[0].len() as u64
+                    sample.len_frames()
                 } else {
                     0
                 };
@@ -268,7 +262,7 @@ impl ProcLoopRange {
         }
     }
 
-    fn update_sample(&mut self, sample: &Option<Arc<Vec<Vec<f32>>>>) {
+    fn update_sample<S: SampleResource>(&mut self, sample: &Option<S>) {
         let Some(sample) = sample else {
             return;
         };
@@ -277,13 +271,13 @@ impl ProcLoopRange {
             return;
         }
 
-        let end_frame = sample[0].len() as u64;
+        let end_frame = sample.len_frames();
 
         self.playhead_range = 0..end_frame;
     }
 }
 
-struct SamplerProcessor {
+struct SamplerProcessor<S: SampleResource> {
     raw_gain: Arc<AtomicF32>,
     gain_smoother: ParamSmoother,
     playing: bool,
@@ -291,19 +285,19 @@ struct SamplerProcessor {
     playhead: u64,
     loop_range: Option<ProcLoopRange>,
 
-    sample: Option<Arc<Vec<Vec<f32>>>>,
+    sample: Option<S>,
 
-    from_node_rx: rtrb::Consumer<NodeToProcessorMsg>,
-    to_node_tx: rtrb::Producer<ProcessorToNodeMsg>,
+    from_node_rx: rtrb::Consumer<NodeToProcessorMsg<S>>,
+    to_node_tx: rtrb::Producer<ProcessorToNodeMsg<S>>,
 }
 
-impl SamplerProcessor {
+impl<S: SampleResource> SamplerProcessor<S> {
     fn new(
         raw_gain: Arc<AtomicF32>,
         sample_rate: u32,
         max_block_frames: usize,
-        from_node_rx: rtrb::Consumer<NodeToProcessorMsg>,
-        to_node_tx: rtrb::Producer<ProcessorToNodeMsg>,
+        from_node_rx: rtrb::Consumer<NodeToProcessorMsg<S>>,
+        to_node_tx: rtrb::Producer<ProcessorToNodeMsg<S>>,
     ) -> Self {
         let gain_val = raw_gain.load(Ordering::Relaxed);
 
@@ -326,7 +320,7 @@ impl SamplerProcessor {
     }
 }
 
-impl AudioNodeProcessor for SamplerProcessor {
+impl<S: SampleResource> AudioNodeProcessor for SamplerProcessor<S> {
     fn process(
         &mut self,
         frames: usize,
@@ -468,11 +462,7 @@ impl AudioNodeProcessor for SamplerProcessor {
             };
             let first_copy_frames = frames.min(frames_left);
 
-            for (out_ch, sample_ch) in outputs.iter_mut().zip(sample.iter()) {
-                out_ch[..first_copy_frames].copy_from_slice(
-                    &sample_ch[self.playhead as usize..self.playhead as usize + first_copy_frames],
-                );
-            }
+            sample.fill_buffers(outputs, 0..first_copy_frames, self.playhead);
 
             if first_copy_frames < frames {
                 // Loop back to the start.
@@ -486,19 +476,14 @@ impl AudioNodeProcessor for SamplerProcessor {
 
                 let second_copy_frames = frames - first_copy_frames;
 
-                for (out_ch, sample_ch) in outputs.iter_mut().zip(sample.iter()) {
-                    out_ch[first_copy_frames..].copy_from_slice(
-                        &sample_ch
-                            [self.playhead as usize..self.playhead as usize + second_copy_frames],
-                    );
-                }
+                sample.fill_buffers(outputs, first_copy_frames..frames, self.playhead);
 
                 self.playhead += second_copy_frames as u64;
             } else {
                 self.playhead += frames as u64;
             }
         } else {
-            if self.playhead >= sample[0].len() as u64 {
+            if self.playhead >= sample.len_frames() {
                 // Playhead is out of range. Output silence.
                 self.playing = false;
                 firewheel_core::util::clear_all_outputs(
@@ -511,23 +496,19 @@ impl AudioNodeProcessor for SamplerProcessor {
                 // TODO: Notify node that sample has finished.
             }
 
-            let copy_frames = frames.min((sample[0].len() as u64 - self.playhead) as usize);
+            let copy_frames = frames.min((sample.len_frames() - self.playhead) as usize);
 
-            for (out_ch, sample_ch) in outputs.iter_mut().zip(sample.iter()) {
-                out_ch[..copy_frames].copy_from_slice(
-                    &sample_ch[self.playhead as usize..self.playhead as usize + copy_frames],
-                );
-
-                // Fill any remaining frames with zeros
-                if copy_frames < frames {
-                    out_ch[copy_frames..].fill(0.0);
-                }
-            }
+            sample.fill_buffers(outputs, 0..copy_frames, self.playhead);
 
             if copy_frames < frames {
                 // Finished playing sample.
                 self.playing = false;
                 self.playhead = 0;
+
+                // Fill any remaining frames with zeros
+                for out_ch in outputs.iter_mut() {
+                    out_ch[copy_frames..].fill(0.0);
+                }
 
                 // TODO: Notify node that sample has finished.
             } else {
@@ -535,9 +516,11 @@ impl AudioNodeProcessor for SamplerProcessor {
             }
         }
 
+        let sample_channels = sample.num_channels().get();
+
         // Apply gain and declick
         // TODO: Declick
-        if outputs.len() >= 2 && sample.len() == 2 {
+        if outputs.len() >= 2 && sample_channels == 2 {
             // Provide an optimized stereo loop.
 
             // Hint to the compiler to optimize loop.
@@ -549,7 +532,7 @@ impl AudioNodeProcessor for SamplerProcessor {
                 outputs[1][i] *= gain.values[i];
             }
         } else {
-            for (out_ch, _) in outputs.iter_mut().zip(sample.iter()) {
+            for (out_ch, _) in outputs.iter_mut().zip(0..sample_channels) {
                 // Hint to the compiler to optimize loop.
                 assert_eq!(out_ch.len(), frames);
 
@@ -559,8 +542,8 @@ impl AudioNodeProcessor for SamplerProcessor {
             }
         }
 
-        if outputs.len() > sample.len() {
-            if outputs.len() == 2 && sample.len() == 1 {
+        if outputs.len() > sample_channels {
+            if outputs.len() == 2 && sample_channels == 1 {
                 // If the output of this node is stereo and the sample is mono,
                 // assume that the user wants both channels filled with the
                 // sample data.
@@ -568,7 +551,7 @@ impl AudioNodeProcessor for SamplerProcessor {
                 outs[0].copy_from_slice(out_first);
             } else {
                 // Fill the rest of the channels with zeros.
-                for (i, out_ch) in outputs.iter_mut().enumerate().skip(sample.len()) {
+                for (i, out_ch) in outputs.iter_mut().enumerate().skip(sample_channels) {
                     out_ch.fill(0.0);
                     proc_info.out_silence_mask.set_channel(i, true);
                 }
@@ -577,7 +560,17 @@ impl AudioNodeProcessor for SamplerProcessor {
     }
 }
 
-impl Into<Box<dyn AudioNode>> for SamplerNode {
+impl<S: SampleResource> Drop for SamplerProcessor<S> {
+    fn drop(&mut self) {
+        if let Some(sample) = self.sample.take() {
+            let _ = self
+                .to_node_tx
+                .push(ProcessorToNodeMsg::ReturnSample(sample));
+        }
+    }
+}
+
+impl<S: SampleResource> Into<Box<dyn AudioNode>> for SamplerNode<S> {
     fn into(self) -> Box<dyn AudioNode> {
         Box::new(self)
     }
